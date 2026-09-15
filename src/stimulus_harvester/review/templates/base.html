@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Review{% endblock %} - {{ run_id }}</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/images">Stimulus Harvester</a>
+  <span class="run-id">{{ run_id }}</span>
+</header>
+<main>
+{% block content %}{% endblock %}
+</main>
+<script src="/static/review.js"></script>
+</body>
+</html>

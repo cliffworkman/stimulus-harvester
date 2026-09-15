@@ -1,0 +1,173 @@
+# Task-specific config for harvesting candidate images that look like they were
+# photographed from inside a prison/jail cell, looking outward. All prison-specific
+# vocabulary (queries, CLIP prompts, VLM observable-property schema) lives HERE, not
+# in the pipeline code -- the code is fully generic and reusable for other tasks.
+#
+# IMPORTANT: relevance_score and every VLM field below are REVIEW AIDS ONLY. Nothing
+# in this pipeline auto-excludes a candidate based on them -- only non-semantic
+# integrity/quality/duplicate checks (see `filter:` below) can exclude a candidate.
+# Final selection is always a human decision made in the review app.
+
+run_name: prison_inside_cell
+output_root: runs
+
+search:
+  seed_queries:
+    - "inside prison cell looking through bars"
+    - "inside jail cell looking outward"
+    - "prison cell interior looking into corridor"
+    - "jail cell point of view"
+    - "empty prison cell interior"
+    - "solitary confinement cell interior"
+    - "prison cell door from inside"
+    - "view from inside a prison cell"
+
+  openverse:
+    enabled: true
+    base_url: "https://api.openverse.org/v1/images/"
+    page_size: 20
+    max_pages_per_query: 3
+    request_timeout_seconds: 15.0
+    request_delay_seconds: 1.0
+
+  searxng:
+    enabled: false
+    endpoint_url: null
+    categories: "images"
+    request_timeout_seconds: 15.0
+    max_results_per_query: 40
+
+  query_expansion:
+    enabled: true
+    max_expanded_queries: 60
+    synonym_groups:
+      - ["prison cell", "jail cell", "cellblock cell", "detention cell"]
+      - ["looking outward", "looking out through the bars", "point of view from inside", "seen from within"]
+    phrase_templates:
+      - "{0} interior {1}"
+      - "inside a {0}, {1}"
+      - "empty {0} interior"
+      - "{0} door from inside"
+
+download:
+  concurrency: 8
+  timeout_seconds: 20.0
+  max_retries: 2
+  retry_backoff_seconds: 2.0
+  user_agent: "stimulus-harvester/0.1 (academic research; contact: set REVIEWER_EMAIL in .env)"
+  max_file_size_bytes: 25000000
+
+# Non-semantic only. These are the ONLY criteria that can hard-exclude a candidate
+# anywhere in this pipeline.
+filter:
+  min_width: 400
+  min_height: 400
+  max_aspect_ratio: 3.0
+  icon_max_dimension: 64
+  phash_hamming_threshold: 8
+  phash_size: 16
+
+clip:
+  model_name: "ViT-B-32"
+  pretrained: "laion2b_s34b_b79k"
+  device: "auto"
+  batch_size: 16
+  squash_temperature: 4.0
+  positive_prompts:
+    - "a photograph taken from inside a prison cell looking outward"
+    - "the viewer is inside a jail cell"
+    - "an empty prison cell interior seen from within"
+    - "a confined first-person architectural view from a prison cell"
+    - "prison bars or a locked cell door visible from inside"
+  negative_prompts:
+    - "the exterior of a prison building"
+    - "a prison corridor photographed from outside the cells"
+    - "an abandoned school cafeteria"
+    - "a generic institutional hallway"
+    - "a close-up of prison bars only"
+    - "a portrait of a prisoner"
+    - "a museum exhibit"
+    - "a cartoon or 3D render"
+
+vlm:
+  # "noop" (default) means the VLM stage is skipped entirely -- the rest of the
+  # pipeline works fully without it. Set to "ollama" to enable structured adjudication
+  # via a local Ollama server (see README for model recommendations).
+  backend: "noop"
+  ollama_base_url: "http://localhost:11434"
+  ollama_model: "llava:7b"
+  timeout_seconds: 60.0
+  max_retries: 2
+  max_images_to_evaluate: null
+  # Every field below is a purely observable scene property. No field may ask about
+  # or infer "self relevance," emotion, identity, or any other psychological
+  # construct -- see score/vlm.py's fixed OBSERVABLE_ONLY_PREAMBLE, which enforces
+  # this regardless of what is configured here.
+  fields:
+    - name: is_photograph
+      type: bool
+      description: "true if this is a real photograph (not a drawing, painting, cartoon, or 3D render)."
+    - name: likely_prison_environment
+      type: bool
+      description: "true if the scene appears to depict a prison, jail, or similar detention facility."
+    - name: camera_inside_cell
+      type: bool
+      description: "true if the camera/viewpoint appears to be physically located inside a prison or jail cell."
+    - name: looking_out_from_cell
+      type: bool
+      description: "true if the image looks outward from inside a cell (e.g. toward bars, a door, or a corridor)."
+    - name: confinement_cues_visible
+      type: bool
+      description: "true if any visual cues of confinement are visible (bars, a locked door, a small enclosed room, etc.)."
+    - name: bars_visible
+      type: bool
+      description: "true if metal bars are visible anywhere in the image."
+    - name: locked_door_visible
+      type: bool
+      description: "true if a cell door (barred or solid, with visible locking hardware) is visible."
+    - name: bed_or_bunk_visible
+      type: bool
+      description: "true if a bed or bunk is visible."
+    - name: toilet_or_sink_visible
+      type: bool
+      description: "true if a toilet or sink is visible."
+    - name: corridor_or_outside_visible
+      type: bool
+      description: "true if a corridor or area outside the cell is visible through the bars/door."
+    - name: people_present
+      type: bool
+      description: "true if any person is visible anywhere in the image."
+    - name: faces_present
+      type: bool
+      description: "true if any human face is visible."
+    - name: text_or_watermark_present
+      type: bool
+      description: "true if visible text, a logo, or a stock-photo watermark appears on the image."
+    - name: obvious_non_prison_confounds
+      type: list_str
+      description: >-
+        list any elements clearly unrelated to a prison cell scene that dominate the
+        image (e.g. "cartoon style", "museum placard", "unrelated outdoor scene"). Use
+        an empty array if none.
+    - name: image_quality_adequate
+      type: bool
+      description: "true if the image is in focus, adequately lit, and not heavily obstructed or cropped."
+    - name: confidence
+      type: float
+      description: "your overall confidence in these ratings, between 0 and 1."
+    - name: brief_scene_description
+      type: str
+      description: "one plain, factual sentence describing what is visible (no interpretation)."
+
+review:
+  host: "127.0.0.1"
+  port: 8000
+  page_size: 60
+
+export:
+  # Excludes ND (no-derivatives) variants -- assumes researchers may need to crop or
+  # otherwise edit accepted images for stimulus use. Confirm this matches your actual
+  # reuse plans before relying on `--license-filter open_only` as a compliance gate.
+  open_license_allowlist: ["cc0", "pdm", "by", "by-sa", "by-nc", "by-nc-sa"]
+  contact_sheet_columns: 6
+  contact_sheet_thumbnail_px: 256

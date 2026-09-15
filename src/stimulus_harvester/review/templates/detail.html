@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}{{ image.local_id }}{% endblock %}
+{% block content %}
+<p class="back"><a href="/images">&larr; back to grid</a></p>
+<div class="detail" data-local-id="{{ image.local_id }}">
+  <div class="detail-image">
+    <img src="/images/{{ image.local_id }}/file" alt="{{ image.local_id }}">
+  </div>
+  <div class="detail-panel">
+    <h2>{{ image.local_id }}</h2>
+
+    <section>
+      <h3>Review</h3>
+      <div class="label-buttons">
+        <button data-label="accepted" class="{{ 'active' if image.review_label == 'accepted' else '' }}">Accept (a)</button>
+        <button data-label="maybe" class="{{ 'active' if image.review_label == 'maybe' else '' }}">Maybe (m)</button>
+        <button data-label="rejected" class="{{ 'active' if image.review_label == 'rejected' else '' }}">Reject (r)</button>
+      </div>
+      <textarea id="notes" rows="3" placeholder="notes...">{{ image.review_notes or '' }}</textarea>
+      <input id="scene-cluster-id" type="text"
+             placeholder="scene_cluster_id (optional -- group photos of the same physical scene/session)"
+             value="{{ image.scene_cluster_id or '' }}">
+      <button id="save-notes" type="button">Save notes / cluster id</button>
+      <p class="hint">Keyboard shortcuts: a = accept, m = maybe, r = reject.</p>
+    </section>
+
+    <section>
+      <h3>Provenance</h3>
+      <table class="kv">
+        <tr><td>source backend</td><td>{{ image.source_backend }}</td></tr>
+        <tr><td>search query</td><td>{{ image.search_query }}</td></tr>
+        <tr><td>seed query</td><td>{{ image.seed_query }}</td></tr>
+        <tr><td>creator</td><td>{{ image.creator or '—' }}</td></tr>
+        <tr><td>license</td><td>{{ image.license or 'unknown' }}</td></tr>
+        <tr><td>license url</td><td>{{ image.license_url or '—' }}</td></tr>
+        <tr><td>landing page</td><td><a href="{{ image.landing_page_url }}" target="_blank" rel="noopener noreferrer">{{ image.landing_page_url }}</a></td></tr>
+        <tr><td>source domain</td><td>{{ image.source_domain or '—' }}</td></tr>
+        <tr><td>source_group_id</td><td>{{ image.source_group_id or '—' }} <span class="hint">(system heuristic, not authoritative)</span></td></tr>
+        <tr><td>file path</td><td class="mono">{{ image.file_path or '—' }}</td></tr>
+        <tr><td>sha256</td><td class="mono">{{ image.sha256 or '—' }}</td></tr>
+        <tr><td>phash</td><td class="mono">{{ image.phash or '—' }}</td></tr>
+        <tr><td>duplicate of</td><td>{{ image.duplicate_of_local_id or '—' }}</td></tr>
+        <tr><td>dimensions</td><td>{{ image.width }} x {{ image.height }}</td></tr>
+      </table>
+    </section>
+
+    <section>
+      <h3>CLIP scores <span class="hint">(review aid, not a filter)</span></h3>
+      <p>relevance_score: <strong>{{ '%.3f'|format(image.clip_relevance_score) if image.clip_relevance_score is not none else 'not scored' }}</strong></p>
+      {% if image.clip_positive_scores %}
+      <table class="kv">
+        {% for prompt, score in image.clip_positive_scores.items() %}
+        <tr><td>+ {{ prompt }}</td><td>{{ '%.3f'|format(score) }}</td></tr>
+        {% endfor %}
+        {% for prompt, score in image.clip_negative_scores.items() %}
+        <tr><td>&minus; {{ prompt }}</td><td>{{ '%.3f'|format(score) }}</td></tr>
+        {% endfor %}
+      </table>
+      {% else %}
+      <p class="hint">Not yet scored.</p>
+      {% endif %}
+    </section>
+
+    <section>
+      <h3>VLM adjudication <span class="hint">(observable properties only, review aid)</span></h3>
+      {% if image.vlm_status %}
+      <p>backend: {{ image.vlm_backend_name }} &middot; model: {{ image.vlm_model_name or '—' }} &middot; status: {{ image.vlm_status }}</p>
+      {% if image.vlm_fields %}
+      <table class="kv">
+        {% for key, value in image.vlm_fields.items() %}
+        <tr><td>{{ key }}</td><td>{{ value }}</td></tr>
+        {% endfor %}
+      </table>
+      {% endif %}
+      {% else %}
+      <p class="hint">Not run.</p>
+      {% endif %}
+    </section>
+
+    <section>
+      <h3>Duplicate cluster</h3>
+      {% if cluster %}
+      <div class="grid small">
+        {% for other in cluster %}
+        <a class="card" href="/images/{{ other.local_id }}">
+          <img loading="lazy" src="/images/{{ other.local_id }}/file" alt="{{ other.local_id }}">
+        </a>
+        {% endfor %}
+      </div>
+      {% else %}
+      <p class="hint">No known exact/near duplicates in this run.</p>
+      {% endif %}
+    </section>
+  </div>
+</div>
+{% endblock %}

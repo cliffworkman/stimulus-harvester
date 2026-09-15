@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Review{% endblock %}
+{% block content %}
+<form class="filters" method="get" action="/images">
+  <input type="text" name="query" placeholder="query/title contains..." value="{{ filters.query }}">
+  <select name="source">
+    <option value="">any source</option>
+    <option value="openverse" {% if filters.source == "openverse" %}selected{% endif %}>openverse</option>
+    <option value="searxng" {% if filters.source == "searxng" %}selected{% endif %}>searxng</option>
+  </select>
+  <input type="text" name="license" placeholder="license" value="{{ filters.license }}">
+  <select name="status">
+    <option value="">any status</option>
+    {% for s in ["unrated", "accepted", "maybe", "rejected"] %}
+    <option value="{{ s }}" {% if filters.status == s %}selected{% endif %}>{{ s }}</option>
+    {% endfor %}
+  </select>
+  <input type="number" step="0.01" name="min_score" placeholder="min score" value="{{ filters.min_score }}">
+  <select name="sort">
+    <option value="score_desc" {% if filters.sort == "score_desc" %}selected{% endif %}>score (high to low)</option>
+    <option value="score_asc" {% if filters.sort == "score_asc" %}selected{% endif %}>score (low to high)</option>
+    <option value="recent" {% if filters.sort == "recent" %}selected{% endif %}>most recent</option>
+  </select>
+  <button type="submit">Filter</button>
+</form>
+
+<p class="meta">{{ total }} candidate(s) &middot; page {{ page }}/{{ total_pages }} &middot;
+  <a href="/api/summary" target="_blank" rel="noopener noreferrer">summary JSON</a>
+</p>
+
+<div class="grid">
+  {% for image in images %}
+  <a class="card" href="/images/{{ image.local_id }}">
+    <div class="thumb-wrap">
+      <img loading="lazy" src="/images/{{ image.local_id }}/file" alt="{{ image.local_id }}">
+      <span class="badge badge-{{ image.review_label or 'unrated' }}">{{ image.review_label or 'unrated' }}</span>
+    </div>
+    <div class="card-meta">
+      <span class="score">{{ '%.3f'|format(image.clip_relevance_score) if image.clip_relevance_score is not none else 'n/a' }}</span>
+      <span class="source">{{ image.source_backend }}</span>
+      <span class="license">{{ image.license or 'unknown' }}</span>
+    </div>
+  </a>
+  {% else %}
+  <p>No candidates match these filters.</p>
+  {% endfor %}
+</div>
+
+<nav class="pager">
+  {% set qs = "query=" ~ (filters.query|urlencode) ~ "&source=" ~ (filters.source|urlencode) ~ "&license=" ~ (filters.license|urlencode) ~ "&status=" ~ (filters.status|urlencode) ~ "&min_score=" ~ (filters.min_score|string|urlencode) ~ "&sort=" ~ (filters.sort|urlencode) %}
+  {% if page > 1 %}<a href="/images?{{ qs }}&page={{ page - 1 }}">&larr; prev</a>{% endif %}
+  {% if page < total_pages %}<a href="/images?{{ qs }}&page={{ page + 1 }}">next &rarr;</a>{% endif %}
+</nav>
+{% endblock %}
