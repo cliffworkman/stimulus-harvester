@@ -32,8 +32,16 @@
         <tr><td>seed query</td><td>{{ image.seed_query }}</td></tr>
         <tr><td>creator</td><td>{{ image.creator or '—' }}</td></tr>
         <tr><td>license</td><td>{{ image.license or 'unknown' }}</td></tr>
-        <tr><td>license url</td><td>{{ image.license_url or '—' }}</td></tr>
-        <tr><td>landing page</td><td><a href="{{ image.landing_page_url }}" target="_blank" rel="noopener noreferrer">{{ image.landing_page_url }}</a></td></tr>
+        <tr><td>license url</td><td>
+          {% if image.license_url and (image.license_url|is_http_url) %}
+          <a href="{{ image.license_url }}" target="_blank" rel="noopener noreferrer">{{ image.license_url }}</a>
+          {% else %}{{ image.license_url or '—' }}{% endif %}
+        </td></tr>
+        <tr><td>landing page</td><td>
+          {% if image.landing_page_url and (image.landing_page_url|is_http_url) %}
+          <a href="{{ image.landing_page_url }}" target="_blank" rel="noopener noreferrer">{{ image.landing_page_url }}</a>
+          {% else %}<span class="mono">{{ image.landing_page_url or '—' }}</span>{% endif %}
+        </td></tr>
         <tr><td>source domain</td><td>{{ image.source_domain or '—' }}</td></tr>
         <tr><td>source_group_id</td><td>{{ image.source_group_id or '—' }} <span class="hint">(system heuristic, not authoritative)</span></td></tr>
         <tr><td>file path</td><td class="mono">{{ image.file_path or '—' }}</td></tr>

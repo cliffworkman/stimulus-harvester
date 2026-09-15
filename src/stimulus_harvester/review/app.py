@@ -36,6 +36,14 @@ class LabelUpdate(BaseModel):
     scene_cluster_id: str | None = None
 
 
+def _is_http_url(value: str | None) -> bool:
+    """Templates must never render an href/src straight from external API data
+    without this check -- an untrusted `landing_page_url`/`license_url` could
+    otherwise carry a `javascript:` (or other) scheme and execute in the reviewer's
+    browser when clicked."""
+    return bool(value) and value.strip().lower().startswith(("http://", "https://"))
+
+
 def row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     data = dict(row)
     for key in _JSON_COLUMNS:
@@ -55,6 +63,7 @@ def create_app(run_dir: Path, config: HarvesterConfig, reviewer_email: str | Non
     app.state.reviewer_email = reviewer_email
     app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
     templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
+    templates.env.filters["is_http_url"] = _is_http_url
 
     def get_conn(request: Request) -> Iterator[sqlite3.Connection]:
         conn = sqlite3.connect(request.app.state.paths.db_path)
