@@ -64,11 +64,27 @@ CUDA-matched `torch` wheel for your GPU/driver first — installing `open_clip_t
 before `torch` risks pip pulling a CPU-only or CUDA-mismatched wheel):
 
 ```bash
-python3 -m pip install torch --index-url https://download.pytorch.org/whl/cu118 && python3 -m pip install -e ".[clip]"
+python3 -m pip install torch==2.7.1 torchvision==0.22.1 --index-url https://download.pytorch.org/whl/cu118 && python3 -m pip install -e ".[clip]"
 ```
 
-(Use whichever CUDA index URL matches your driver; for CPU-only, just
-`python3 -m pip install -e ".[clip]"` without a special index.)
+**Pin an exact torch/torchvision version rather than installing unpinned "latest"
+from a CUDA-tagged index.** Confirmed during testing: PyTorch's CUDA-tagged indexes
+(e.g. `.../whl/cu118`) do not necessarily keep serving a cu118 build of the *newest*
+torch release — an unpinned `pip install torch --index-url .../cu118` on this project's
+own test box resolved to `torch==2.14.0+cu130`, which requires a CUDA 13 driver and
+silently fails (`torch.cuda.is_available()` returns `False`) on a driver that only
+supports up to CUDA 12.2. `torch==2.7.1`/`torchvision==0.22.1` are the versions
+verified working end-to-end (including real CLIP inference) on an RTX 3050 with driver
+535.309.01 — adjust only if your driver/CUDA situation genuinely differs, and always
+verify with `python3 -c "import torch; print(torch.cuda.is_available())"` before
+trusting a new pin. Also uninstall (or use a fresh venv) rather than upgrading torch
+in place if you've previously installed a different CUDA-tagged build: pip does not
+clean up now-mismatched `nvidia-*-cuXX` dependency packages left behind by the old
+build, and their presence alongside a new build can itself cause
+`CUDNN_STATUS_NOT_INITIALIZED` errors.
+
+(Use whichever CUDA index URL and torch version matches your driver; for CPU-only,
+just `python3 -m pip install -e ".[clip]"` without a special index.)
 
 The optional VLM adjudication step needs no extra Python packages — it talks to a
 local [Ollama](https://ollama.com) server over HTTP:
@@ -77,8 +93,17 @@ local [Ollama](https://ollama.com) server over HTTP:
 ollama pull llava:7b
 ```
 
-(On an 8 GB card already running CLIP, a smaller vision model such as `moondream` may
-leave more VRAM headroom — try it and see what fits.)
+**Model capability matters for this step, confirmed during testing:** a very small
+vision model (`moondream`, ~1.8B) reliably returned *incomplete* JSON for this task's
+17-field schema (consistently omitting one or more required keys, even after the
+built-in retry-with-corrective-prompt), which the strict field validation correctly
+rejected as `status: error` rather than silently accepting partial data. `llava:7b`
+completed the same schema correctly on every test image, including correctly
+identifying an off-target search result as `likely_prison_environment: false` with
+`obvious_non_prison_confounds: ["unrelated outdoor scene"]`. If you need a smaller
+model for VRAM reasons, expect to see more `status: error` rows and treat that as a
+signal to either use a larger model or shorten `vlm.fields` in your config, not as a
+bug to work around.
 
 Optionally, for development:
 
@@ -231,9 +256,11 @@ actually loads, so a run's exact settings are never ambiguous after the fact.
   implementation time.
 - Public SearXNG instances often disable `format=json`; the optional backend may
   require a self-hosted instance.
-- The default `vlm.ollama_model: llava:7b` is not VRAM-validated for every 8 GB card
-  running alongside CLIP — try a smaller model (e.g. `moondream`) if you hit
-  out-of-memory errors.
+- The default `vlm.ollama_model: llava:7b` was confirmed working (both for VRAM
+  headroom and for reliably completing the full field schema) alongside CLIP on an
+  8 GB RTX 3050. A much smaller model (`moondream`) ran without VRAM issues but
+  consistently failed to return the complete 17-field schema — see the VLM section of
+  "Install" above.
 - The default `export.open_license_allowlist` excludes ND (no-derivatives) licenses,
   on the assumption that stimuli may need cropping/editing. Confirm this matches your
   actual reuse plans.
