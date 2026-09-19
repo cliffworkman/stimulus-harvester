@@ -55,8 +55,15 @@ project.
 ## Install
 
 ```bash
-python3 -m venv .venv && source .venv/bin/activate && python3 -m pip install --upgrade pip && python3 -m pip install -r requirements.txt
+python3 -m venv .venv
+source .venv/bin/activate
+python3 -m pip install --upgrade pip
+python3 -m pip install .
 ```
+
+On Windows PowerShell, activate with `.\.venv\Scripts\Activate.ps1` and use `python`
+instead of `python3`. Installing `requirements.txt` alone does **not** install this
+application. For development use `python -m pip install -e ".[dev]"`.
 
 This installs everything needed for search, download, filtering, the review app, and
 exports. CLIP scoring needs one more step (kept separate because you should install a
@@ -113,8 +120,9 @@ python3 -m pip install -e ".[dev]"
 
 ## Configure
 
-Copy `.env.example` to `.env` if you want to set `REVIEWER_EMAIL`, a SearXNG endpoint,
-or a non-default Ollama URL — none of this is required to run the pipeline.
+Set `REVIEWER_EMAIL` in your shell, or pass `review --reviewer`, for review attribution.
+Configure SearXNG and Ollama endpoints in YAML. The application does not load `.env`
+files; `.env.example` is a historical reference, not an active configuration loader.
 
 The shipped config, `configs/prison_inside_cell.yaml`, is fully commented and is the
 only place task-specific vocabulary lives: search queries, CLIP prompts, and the VLM's
@@ -141,7 +149,34 @@ Key sections:
 - `export.open_license_allowlist` — which license strings count as "open" for
   `--license-filter open_only`.
 
-## Run the pipeline
+## Durable projects (Checkpoint 2)
+
+Use explicit project paths to reopen from any working directory:
+
+```bash
+stimulus-harvester project create --project "my research project" --config configs/prison_inside_cell.yaml
+stimulus-harvester project status --project "my research project"
+stimulus-harvester search --project "my research project"
+stimulus-harvester download --project "my research project"
+stimulus-harvester filter --project "my research project"
+stimulus-harvester score --project "my research project"
+stimulus-harvester review --project "my research project"
+stimulus-harvester export --project "my research project"
+```
+
+Open/migrate an existing run with `stimulus-harvester project open --project PATH`.
+No discovery rerun is required. See [project identity, migration, services, and
+limitations](docs/projects.md). There is no freeze/assembly or desktop GUI yet.
+`images/accepted/` is a **legacy, non-authoritative convenience folder** that can
+retain copies from previous decisions; it is not an approved frozen stimulus set.
+
+Installed wheels include browser resources and a minimal config you can extract:
+
+```bash
+python -c "from importlib.resources import files; from pathlib import Path; Path('harvester.yaml').write_text(files('stimulus_harvester').joinpath('resources/minimal.yaml').read_text(encoding='utf-8'), encoding='utf-8')"
+```
+
+## Legacy run-ID commands
 
 Each stage reads/writes `runs/RUN_ID/`. Run commands from the same working directory
 each time (the `RUN_ID` is looked up under `./runs` by default).
@@ -160,10 +195,10 @@ python3 -m stimulus_harvester review --run-id RUN_ID
 python3 -m stimulus_harvester export --run-id RUN_ID --label accepted
 ```
 
-Every stage is idempotent-ish: rerunning `download`/`filter`/`score` only processes
-rows that haven't been through that stage yet (based on the run's SQLite state), so
-you can `search` again to pull in more candidates and then rerun the later stages
-without redoing work.
+Rerunning `download`/`filter`/`score` processes rows that have not been through that
+stage yet. Failed downloads are also considered attempted; retry-failed behavior is
+not implemented. `search --config` creates a new project; use `search --project PATH`
+to add discoveries to an existing project using its stored configuration.
 
 - `search` — expands queries, calls enabled backends, writes raw API responses to
   `runs/RUN_ID/raw_api/`, and creates the run's SQLite DB.

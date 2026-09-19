@@ -26,6 +26,18 @@
 
     <section>
       <h3>Provenance</h3>
+      <p>Candidate: {{ lineage.candidate_id }}<br>Asset: {{ lineage.asset_id or 'not acquired' }}</p>
+      <p><a href="/images/{{ image.local_id }}/evidence">Full lineage JSON</a></p>
+      {% for source in lineage.sources %}
+      <details><summary>{{ source.provider }} — {{ source.license or 'license unknown' }} — {{ source.query }}</summary>
+        <p>Creator: {{ source.creator or 'unknown' }}; retrieved: {{ source.retrieved_at or 'unknown' }}</p>
+        <p>Source page:
+        {% if source.source_page_url|is_http_url %}<a href="{{ source.source_page_url }}" target="_blank" rel="noopener noreferrer">{{ source.source_page_url }}</a>{% else %}{{ source.source_page_url or 'unknown' }}{% endif %}</p>
+        <p>Direct image:
+        {% if source.image_url|is_http_url %}<a href="{{ source.image_url }}" target="_blank" rel="noopener noreferrer">{{ source.image_url }}</a>{% else %}{{ source.image_url }}{% endif %}</p>
+        <p>Evidence: {{ source.evidence_origin }}; {{ source.raw_response_path or 'no raw response reference' }}</p>
+      </details>
+      {% endfor %}
       <table class="kv">
         <tr><td>source backend</td><td>{{ image.source_backend }}</td></tr>
         <tr><td>search query</td><td>{{ image.search_query }}</td></tr>

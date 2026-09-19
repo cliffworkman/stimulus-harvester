@@ -1,174 +1,189 @@
-"""Command-line entrypoint: search -> download -> filter -> score -> review -> export."""
+"""CLI frontend for shared project services; legacy --run-id remains supported."""
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import click
 
+from stimulus_harvester import services
 from stimulus_harvester.config import load_config
 from stimulus_harvester.logging_utils import attach_run_log_file, configure_logging
-from stimulus_harvester.paths import RunPaths, find_run_dir, new_run_id
+from stimulus_harvester.paths import find_run_dir, new_run_id
+from stimulus_harvester.storage import new_id
 
 
-def _resolve_run_dir(run_id: str) -> Path:
+def _project(project_path: Path | None, run_id: str | None):
+    if bool(project_path) == bool(run_id):
+        raise click.UsageError("Specify exactly one of --project PATH or legacy --run-id ID")
     try:
-        return find_run_dir(run_id)
-    except FileNotFoundError as exc:
+        return services.open_project(project_path or find_run_dir(run_id))
+    except (ValueError, OSError, RuntimeError) as exc:
         raise click.ClickException(str(exc)) from exc
 
 
-@click.group()
-@click.option("-v", "--verbose", count=True, help="Increase log verbosity (-v for DEBUG).")
-def cli(verbose: int) -> None:
-    """Local-first stimulus image harvesting, filtering, scoring, and review pipeline.
+def project_options(function):
+    function = click.option("--run-id", help="Legacy lookup under ./runs; prefer --project.")(
+        function
+    )
+    return click.option(
+        "--project",
+        "project_path",
+        type=click.Path(path_type=Path),
+        help="Explicit project or legacy run directory.",
+    )(function)
 
-    CLIP and VLM scores are review aids only -- they never automatically exclude a
-    candidate. Final selection is always a human decision made via `review`.
-    """
+
+def _run(project, stage: str, **options):
+    attach_run_log_file(project.paths.log_path)
+    try:
+        result = services.run_stage(project, stage, **options)
+    except (ValueError, OSError, RuntimeError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"operation-id: {result.operation_id}")
+    if result.status != "succeeded":
+        raise click.ClickException(f"{stage}: {result.status}: {result.error}")
+    return result.result
+
+
+@click.group()
+@click.option("-v", "--verbose", count=True, help="Increase log verbosity.")
+def cli(verbose: int) -> None:
+    """Local-first research stimulus discovery and human review."""
     configure_logging(verbose)
+
+
+@cli.group("project")
+def project_cmd():
+    """Create, open/migrate, and inspect durable project folders."""
+
+
+@project_cmd.command("create")
+@click.option("--project", "project_path", required=True, type=click.Path(path_type=Path))
+@click.option(
+    "--config", "config_path", required=True, type=click.Path(exists=True, path_type=Path)
+)
+def create_cmd(project_path: Path, config_path: Path):
+    try:
+        project = services.create_project(project_path, load_config(config_path))
+    except (ValueError, OSError, RuntimeError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(json.dumps(services.project_status(project), indent=2))
+
+
+@project_cmd.command("open")
+@project_options
+def open_cmd(project_path: Path | None, run_id: str | None):
+    """Open a project; legacy runs are backed up and migrated without discovery."""
+    click.echo(json.dumps(services.project_status(_project(project_path, run_id)), indent=2))
+
+
+@project_cmd.command("status")
+@project_options
+def status_cmd(project_path: Path | None, run_id: str | None):
+    click.echo(json.dumps(services.project_status(_project(project_path, run_id)), indent=2))
 
 
 @cli.command("search")
 @click.option(
-    "--config", "config_path", required=True,
-    type=click.Path(exists=True, dir_okay=False, path_type=Path),
-    help="Path to a YAML config file, e.g. configs/prison_inside_cell.yaml",
+    "--config", "config_path", type=click.Path(exists=True, dir_okay=False, path_type=Path)
 )
-@click.option("--run-name", default=None, help="Override run_name from the config file.")
-def search_cmd(config_path: Path, run_name: str | None) -> None:
-    """Expand queries, run enabled search backends, and start a new run."""
-    from stimulus_harvester.search import run_search_stage
-
-    config = load_config(config_path)
-    if run_name:
-        config.run_name = run_name
-    run_id = new_run_id(config.run_name)
-    attach_run_log_file(RunPaths(root=config.output_root / run_id).log_path)
-
+@click.option("--run-name", default=None)
+@click.option("--project", "project_path", type=click.Path(path_type=Path))
+def search_cmd(config_path: Path | None, run_name: str | None, project_path: Path | None):
+    """Discover into an existing project, or create one from --config."""
     try:
-        _, total = run_search_stage(config, run_id, config_path)
-    except ValueError as exc:
+        if project_path and (project_path / "review" / "state.db").exists():
+            if config_path or run_name:
+                raise click.UsageError(
+                    "Existing projects use their snapshot; omit --config/--run-name"
+                )
+            project = services.open_project(project_path)
+        else:
+            if config_path is None:
+                raise click.UsageError("New projects require --config")
+            config = load_config(config_path)
+            if run_name:
+                config.run_name = run_name
+            root = project_path or config.output_root / (
+                new_run_id(config.run_name) + "_" + new_id("run")[-8:]
+            )
+            project = services.create_project(root, config)
+    except (ValueError, OSError, RuntimeError) as exc:
         raise click.ClickException(str(exc)) from exc
-
-    click.echo(f"run-id: {run_id}")
-    click.echo(f"Found {total} candidate(s).")
-    click.echo(f"Next: python3 -m stimulus_harvester download --run-id {run_id}")
+    total = _run(project, "search")
+    click.echo(
+        f"run-id: {project.root.name}\nproject: {project.root}\nFound {total} discovery record(s)."
+    )
 
 
 @cli.command("download")
-@click.option("--run-id", required=True)
-@click.option("--concurrency", type=int, default=None, help="Override download.concurrency from config.")
-def download_cmd(run_id: str, concurrency: int | None) -> None:
-    """Download candidate images. Every attempt (success or failure) is recorded."""
-    from stimulus_harvester.download import run_download_stage
-
-    run_dir = _resolve_run_dir(run_id)
-    attach_run_log_file(RunPaths(root=run_dir).log_path)
-    success, failed = run_download_stage(run_dir, concurrency_override=concurrency)
+@project_options
+@click.option("--concurrency", type=int, default=None)
+def download_cmd(project_path, run_id, concurrency):
+    success, failed = _run(
+        _project(project_path, run_id), "download", concurrency_override=concurrency
+    )
     click.echo(f"Downloaded: {success} succeeded, {failed} failed.")
-    click.echo(f"Next: python3 -m stimulus_harvester filter --run-id {run_id}")
 
 
 @cli.command("filter")
-@click.option("--run-id", required=True)
-def filter_cmd(run_id: str) -> None:
-    """Apply non-semantic quality/duplicate filters only (never a relevance score)."""
-    from stimulus_harvester.filter import run_filter_stage
-
-    run_dir = _resolve_run_dir(run_id)
-    attach_run_log_file(RunPaths(root=run_dir).log_path)
-    passed, excluded = run_filter_stage(run_dir)
+@project_options
+def filter_cmd(project_path, run_id):
+    passed, excluded = _run(_project(project_path, run_id), "filter")
     click.echo(f"Filter: {passed} passed, {excluded} excluded for non-semantic reasons.")
-    click.echo(f"Next: python3 -m stimulus_harvester score --run-id {run_id}")
 
 
 @cli.command("score")
-@click.option("--run-id", required=True)
-@click.option(
-    "--vlm/--no-vlm", "vlm", default=None,
-    help="Force-enable/disable the VLM stage regardless of config (default: run it iff vlm.backend != noop).",
-)
-def score_cmd(run_id: str, vlm: bool | None) -> None:
-    """Score candidates with CLIP (always) and optionally adjudicate with a VLM.
-
-    Both are review aids: nothing here excludes a candidate from the run.
-    """
-    from stimulus_harvester.paths import load_run_config
-    from stimulus_harvester.score import run_clip_scoring, run_vlm_scoring
-
-    run_dir = _resolve_run_dir(run_id)
-    attach_run_log_file(RunPaths(root=run_dir).log_path)
-
-    try:
-        scored = run_clip_scoring(run_dir)
-    except ImportError as exc:
-        raise click.ClickException(
-            "CLIP scoring requires the optional [clip] extra (torch + open_clip_torch). "
-            'Install a CUDA-matched torch wheel first, then: python3 -m pip install -e ".[clip]"\n'
-            f"Original error: {exc}"
-        ) from exc
-    click.echo(f"CLIP-scored {scored} image(s).")
-
-    config = load_run_config(run_dir)
-    should_run_vlm = vlm if vlm is not None else (config.vlm.backend != "noop")
-    if should_run_vlm:
-        evaluated = run_vlm_scoring(run_dir)
-        click.echo(f"VLM-adjudicated {evaluated} image(s) (backend={config.vlm.backend}).")
-    else:
-        click.echo("VLM stage skipped (vlm.backend=noop; pass --vlm to force it anyway).")
-
-    click.echo(f"Next: python3 -m stimulus_harvester review --run-id {run_id}")
+@project_options
+@click.option("--vlm/--no-vlm", default=None)
+def score_cmd(project_path, run_id, vlm):
+    """CLIP ranking, plus optional local VLM annotations; requires [clip]."""
+    click.echo(json.dumps(_run(_project(project_path, run_id), "score", vlm=vlm)))
 
 
 @cli.command("review")
-@click.option("--run-id", required=True)
-@click.option("--host", default=None, help="Override review.host from config.")
-@click.option("--port", type=int, default=None, help="Override review.port from config.")
-@click.option(
-    "--reviewer", "reviewer_email", default=None, envvar="REVIEWER_EMAIL",
-    help="Attribution stamp recorded on label/notes edits this session (or set REVIEWER_EMAIL).",
-)
-def review_cmd(run_id: str, host: str | None, port: int | None, reviewer_email: str | None) -> None:
-    """Launch the local review app for this run."""
+@project_options
+@click.option("--host", default=None)
+@click.option("--port", type=int, default=None)
+@click.option("--reviewer", "reviewer_email", default=None, envvar="REVIEWER_EMAIL")
+def review_cmd(project_path, run_id, host, port, reviewer_email):
     import uvicorn
 
-    from stimulus_harvester.paths import load_run_config
-    from stimulus_harvester.review.app import create_app
-
-    run_dir = _resolve_run_dir(run_id)
-    config = load_run_config(run_dir)
-    app = create_app(run_dir, config, reviewer_email=reviewer_email)
-    bind_host = host or config.review.host
-    bind_port = port or config.review.port
-    click.echo(f"Review app: http://{bind_host}:{bind_port}/images")
-    uvicorn.run(app, host=bind_host, port=bind_port, log_level="info")
+    project = _project(project_path, run_id)
+    app = services.review_application(project, reviewer_email=reviewer_email)
+    host = host or project.config.review.host
+    port = port or project.config.review.port
+    click.echo(f"Review app: http://{host}:{port}/images")
+    uvicorn.run(app, host=host, port=port, log_level="info")
 
 
 @cli.command("export")
-@click.option("--run-id", required=True)
+@project_options
 @click.option(
     "--label", type=click.Choice(["accepted", "maybe", "rejected", "all"]), default="accepted"
 )
+@click.option("--license-filter", type=click.Choice(["open_only", "all"]), default="all")
 @click.option(
-    "--license-filter", "license_filter", type=click.Choice(["open_only", "all"]), default="all",
-    help="'open_only' keeps only images whose license is on the configured allowlist; "
-    "unknown/restricted licenses are excluded from export (not from the working set).",
-)
-@click.option(
-    "--formats", "formats", multiple=True,
+    "--formats",
+    multiple=True,
     type=click.Choice(["csv", "jsonl", "html", "summary"]),
     default=("csv", "jsonl", "html", "summary"),
 )
-def export_cmd(run_id: str, label: str, license_filter: str, formats: tuple[str, ...]) -> None:
-    """Export manifests, an accepted-images contact sheet, and a review summary."""
-    from stimulus_harvester.export import export_run
-
-    run_dir = _resolve_run_dir(run_id)
-    attach_run_log_file(RunPaths(root=run_dir).log_path)
-    written = export_run(run_dir, label=label, license_filter=license_filter, formats=tuple(formats))
-    for fmt, path in written.items():
-        click.echo(f"{fmt}: {path}")
+def export_cmd(project_path, run_id, label, license_filter, formats):
+    result = _run(
+        _project(project_path, run_id),
+        "export",
+        label=label,
+        license_filter=license_filter,
+        formats=formats,
+    )
+    for name, path in result.items():
+        click.echo(f"{name}: {path}")
+    click.echo(
+        "Legacy accepted-folder copies are non-authoritative; no freeze/assembly exists yet."
+    )
 
 
 def main() -> None:

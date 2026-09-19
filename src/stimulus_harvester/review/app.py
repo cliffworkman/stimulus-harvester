@@ -23,6 +23,7 @@ from stimulus_harvester.config import HarvesterConfig
 from stimulus_harvester.models import ReviewLabel
 from stimulus_harvester.paths import RunPaths
 from stimulus_harvester.review import db as db_module
+from stimulus_harvester.storage import candidate_evidence, project_lock, resolve_path
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 _STATIC_DIR = Path(__file__).parent / "static"
@@ -142,6 +143,7 @@ def create_app(run_dir: Path, config: HarvesterConfig, reviewer_email: str | Non
             {
                 "run_id": run_dir.name,
                 "image": row_to_dict(row),
+                "lineage": candidate_evidence(conn, local_id),
                 "cluster": [row_to_dict(r) for r in cluster_rows if r["local_id"] != local_id],
             },
         )
@@ -152,9 +154,16 @@ def create_app(run_dir: Path, config: HarvesterConfig, reviewer_email: str | Non
         if row is None:
             raise HTTPException(status_code=404, detail="unknown local_id")
         file_path = row["file_path"]
-        if not file_path or not Path(file_path).exists():
+        if not file_path or not resolve_path(run_dir, file_path).exists():
             raise HTTPException(status_code=404, detail="file not found on disk")
-        return FileResponse(file_path)
+        return FileResponse(resolve_path(run_dir, file_path))
+
+    @app.get("/images/{local_id}/evidence")
+    def image_evidence(local_id: str, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+        try:
+            return candidate_evidence(conn, local_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @app.post("/images/{local_id}/label")
     def set_label(
@@ -167,16 +176,15 @@ def create_app(run_dir: Path, config: HarvesterConfig, reviewer_email: str | Non
         if existing is None:
             raise HTTPException(status_code=404, detail="unknown local_id")
 
-        row = db_module.set_review_label(
-            conn,
-            local_id,
-            label=update.label,
-            notes=update.notes,
-            scene_cluster_id=update.scene_cluster_id,
-            reviewer_email=app.state.reviewer_email,
-        )
-        if update.label == ReviewLabel.ACCEPTED.value and row["file_path"]:
-            _mirror_accepted(paths, row["file_path"])
+        try:
+            with project_lock(run_dir):
+                row = db_module.set_review_label(
+                    conn, local_id, label=update.label, notes=update.notes,
+                    scene_cluster_id=update.scene_cluster_id,
+                    reviewer_email=app.state.reviewer_email,
+                )
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         return JSONResponse(row_to_dict(row))
 
     @app.get("/api/summary")
@@ -184,13 +192,3 @@ def create_app(run_dir: Path, config: HarvesterConfig, reviewer_email: str | Non
         return db_module.summary_counts(conn)
 
     return app
-
-
-def _mirror_accepted(paths: RunPaths, file_path: str) -> None:
-    src = Path(file_path)
-    if not src.exists():
-        return
-    dest = paths.images_accepted / src.name
-    if not dest.exists():
-        paths.images_accepted.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(src.read_bytes())

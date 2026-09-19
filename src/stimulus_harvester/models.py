@@ -53,6 +53,12 @@ class SearchResult(BaseModel):
     # candidates may share one physical scene or photo session, not a claim they do.
     source_group_id: str | None = None
     retrieved_at: datetime = Field(default_factory=utcnow)
+    # Optional until the provider reports these; never fabricate legacy ordering.
+    rank: int | None = None
+    page: int | None = None
+    result_order: int | None = None
+    query_lineage: dict = Field(default_factory=dict)
+    provider_metadata: dict = Field(default_factory=dict)
 
 
 class DownloadStatus(str, Enum):

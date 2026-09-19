@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Local-first pipeline for harvesting, filtering, scoring, and reviewing candidate stimulus images for research use."
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = { file = "LICENSE" }
 
 dependencies = [
     "click>=8.1,<9",
@@ -30,6 +30,8 @@ clip = [
 # No extra needed for VLM adjudication: the Ollama backend only needs httpx (core).
 # Ollama itself is an external local service you run separately, not a pip package.
 dev = [
+    "setuptools>=68",
+    "wheel",
     "pytest>=8.0,<9",
     "pytest-cov>=5.0,<6",
     "respx>=0.21,<1",
@@ -46,6 +48,9 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+stimulus_harvester = ["py.typed", "review/templates/*.html", "review/static/*.css", "review/static/*.js", "resources/*.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

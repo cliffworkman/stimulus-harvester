@@ -17,6 +17,7 @@ from stimulus_harvester.logging_utils import get_logger
 from stimulus_harvester.models import FilterReason, ImageQualityResult
 from stimulus_harvester.paths import RunPaths, load_run_config
 from stimulus_harvester.provenance import mark_stage_complete
+from stimulus_harvester.storage import resolve_path
 from stimulus_harvester.review.db import (
     init_db,
     list_all_known_hashes,
@@ -53,7 +54,7 @@ def run_filter_stage(run_dir: Path) -> tuple[int, int]:
     with results_path.open("a", encoding="utf-8") as fh:
         for row in pending:
             local_id = row["local_id"]
-            file_path = Path(row["file_path"]) if row["file_path"] else None
+            file_path = resolve_path(run_dir, row["file_path"]) if row["file_path"] else None
 
             if file_path is None or not file_path.exists():
                 result = ImageQualityResult(

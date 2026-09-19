@@ -1,0 +1,8 @@
+run_name: my_project
+search:
+  seed_queries: ["architecture interior"]
+  query_expansion:
+    enabled: false
+clip:
+  positive_prompts: ["a photograph of an architectural interior"]
+  negative_prompts: ["a diagram or illustration"]

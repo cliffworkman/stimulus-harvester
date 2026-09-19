@@ -28,6 +28,10 @@ def run_download_stage(run_dir: Path, *, concurrency_override: int | None = None
         return 0, 0
 
     records = download_all(candidates, paths.images_original, config.download)
+    from stimulus_harvester.storage import stored_path
+    records = [record.model_copy(update={
+        "file_path": stored_path(run_dir, record.file_path, legacy=True)
+    }) for record in records]
 
     results_path = paths.manifests / "download_results.jsonl"
     success = failure = 0

@@ -29,6 +29,7 @@ from stimulus_harvester.review.db import (
 )
 from stimulus_harvester.score.rubric import compute_composite
 from stimulus_harvester.score.vlm import build_backend
+from stimulus_harvester.storage import resolve_path
 
 logger = get_logger("score")
 
@@ -63,7 +64,7 @@ def run_clip_scoring(run_dir: Path) -> int:
     text_embeds = ranker.embed_texts(positive_prompts + negative_prompts)
 
     local_ids = [row["local_id"] for row in pending]
-    image_paths = [Path(row["file_path"]) for row in pending]
+    image_paths = [resolve_path(run_dir, row["file_path"]) for row in pending]
     image_embeds = ranker.embed_images(image_paths, batch_size=config.clip.batch_size)
 
     similarities = image_embeds @ text_embeds.T
@@ -136,7 +137,7 @@ def run_vlm_scoring(run_dir: Path) -> int:
         with results_path.open("a", encoding="utf-8") as fh:
             for row in pending:
                 result: VLMResult = backend.evaluate(
-                    Path(row["file_path"]), row["local_id"], config.vlm.fields
+                    resolve_path(run_dir, row["file_path"]), row["local_id"], config.vlm.fields
                 )
                 fh.write(result.model_dump_json() + "\n")
                 update_vlm(conn, result)

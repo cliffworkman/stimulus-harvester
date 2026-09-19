@@ -114,18 +114,26 @@ _SORT_COLUMNS = {
 
 
 def init_db(db_path: Path) -> sqlite3.Connection:
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.executescript(_SCHEMA)
-    conn.commit()
-    return conn
+    from stimulus_harvester.storage import connect_database
+    return connect_database(db_path, _SCHEMA)
 
 
-def upsert_image_from_search(conn: sqlite3.Connection, result: SearchResult, run_id: str) -> None:
-    """First-seen wins: if this local_id already exists (same backend+url found by a
-    different query), the existing row is left untouched."""
+def upsert_image_from_search(conn: sqlite3.Connection, result: SearchResult, run_id: str,
+                             *, record_source: bool = True, commit: bool = True) -> str:
+    """Keep the first-source legacy projection while appending every source claim.
+
+    A shared URL reuses its existing candidate. Original provider-derived IDs stay
+    available as aliases, including those whose URL was historically deduplicated.
+    """
+    from stimulus_harvester.storage import candidate_for, record_discovery
+    original = result
+    # Same URL reuses the working candidate; every discovery keeps its own claims.
+    existing = conn.execute("SELECT local_id FROM images WHERE local_id=?", (result.local_id,)).fetchone()
+    if existing is None:
+        existing = conn.execute("SELECT local_id FROM images WHERE image_url=? ORDER BY local_id",
+                                (result.image_url,)).fetchone()
+    if existing:
+        result = result.model_copy(update={"local_id": existing[0]})
     conn.execute(
         """
         INSERT OR IGNORE INTO images (
@@ -156,7 +164,12 @@ def upsert_image_from_search(conn: sqlite3.Connection, result: SearchResult, run
     conn.execute(
         "INSERT OR IGNORE INTO reviews (local_id, label) VALUES (?, 'unrated')", (result.local_id,)
     )
-    conn.commit()
+    candidate_for(conn, result.local_id)
+    if record_source:
+        record_discovery(conn, original.model_dump(mode="json"), result.local_id)
+    if commit:
+        conn.commit()
+    return result.local_id
 
 
 def list_pending_downloads(conn: sqlite3.Connection) -> list[tuple[str, str]]:
@@ -208,6 +221,10 @@ def list_all_known_hashes(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 
 
 def update_download(conn: sqlite3.Connection, record: DownloadRecord) -> None:
+    from stimulus_harvester.storage import connection_root, record_acquisition, stored_path
+    record = record.model_copy(update={
+        "file_path": stored_path(connection_root(conn), record.file_path, legacy=True)
+    })
     conn.execute(
         """
         UPDATE images SET
@@ -228,6 +245,7 @@ def update_download(conn: sqlite3.Connection, record: DownloadRecord) -> None:
             record.local_id,
         ),
     )
+    record_acquisition(conn, record.model_dump(mode="json"))
     conn.commit()
 
 

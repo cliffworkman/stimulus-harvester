@@ -24,9 +24,11 @@ def export_run(
     run_id = run_dir.name
 
     all_rows = build_manifest_rows(conn, run_id, config.export.open_license_allowlist)
+    from stimulus_harvester.storage import candidate_evidence
+    lineage = {row.local_id: candidate_evidence(conn, row.local_id) for row in all_rows}
     conn.close()
 
-    accepted_synced = sync_accepted_images(all_rows, paths.images_accepted)
+    accepted_synced = sync_accepted_images(all_rows, paths.images_accepted, root=run_dir)
     logger.info("Synced %d accepted image(s) into %s", accepted_synced, paths.images_accepted)
 
     export_rows = filter_rows(all_rows, label=label, license_filter=license_filter)
@@ -59,11 +61,16 @@ def export_run(
         jsonl_path = paths.exports / f"manifest_{label}.jsonl"
         write_jsonl(export_rows, jsonl_path)
         written["jsonl"] = str(jsonl_path)
+        lineage_path = paths.exports / f"lineage_{label}.jsonl"
+        with lineage_path.open("w", encoding="utf-8") as handle:
+            for row in export_rows:
+                handle.write(json.dumps(lineage[row.local_id], ensure_ascii=False) + "\n")
+        written["lineage"] = str(lineage_path)
 
     if "html" in formats:
         html_path = paths.exports / "contact_sheet.html"
         build_contact_sheet(
-            all_rows, html_path,
+            export_rows, html_path, root=run_dir,
             columns=config.export.contact_sheet_columns, thumbnail_px=config.export.contact_sheet_thumbnail_px,
         )
         written["html"] = str(html_path)

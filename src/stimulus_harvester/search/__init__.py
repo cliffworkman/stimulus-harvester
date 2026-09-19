@@ -30,17 +30,26 @@ def _build_adapters(config: HarvesterConfig) -> list[SearchAdapter]:
     return adapters
 
 
-def run_search_stage(config: HarvesterConfig, run_id: str, config_path: Path) -> tuple[RunPaths, int]:
+def run_search_stage(config: HarvesterConfig, run_id: str, config_path: Path,
+                     *, project_root: Path | None = None) -> tuple[RunPaths, int]:
     """Run the search stage end to end. Returns (run_paths, total_results_found)."""
-    paths = run_paths_for(config.output_root, run_id)
+    paths = RunPaths(project_root) if project_root else run_paths_for(config.output_root, run_id)
     paths.ensure()
-    paths.config_snapshot_path.write_text(config_to_yaml_str(config), encoding="utf-8")
+    if not paths.config_snapshot_path.exists():
+        paths.config_snapshot_path.write_text(config_to_yaml_str(config), encoding="utf-8")
+    elif paths.config_snapshot_path.read_text(encoding="utf-8") != config_to_yaml_str(config):
+        # Existing evidence uses its stored configuration, not a replacement snapshot.
+        from stimulus_harvester.paths import load_run_config
+        config = load_run_config(paths.root)
 
-    init_reproducibility_manifest(
-        paths.reproducibility_path, run_id=run_id, config=config, config_path=config_path
-    )
+    if not paths.reproducibility_path.exists():
+        init_reproducibility_manifest(
+            paths.reproducibility_path, run_id=run_id, config=config, config_path=config_path
+        )
 
     conn = init_db(paths.db_path)
+    from stimulus_harvester.storage import ACTIVE_OPERATION, new_id, stored_path
+    raw_dir = paths.raw_api / (ACTIVE_OPERATION.get() or new_id("search"))
     expanded = expand_queries_from_config(config.search.query_expansion, config.search.seed_queries)
     logger.info("Expanded %d seed queries to %d total queries", len(config.search.seed_queries), len(expanded))
 
@@ -59,15 +68,17 @@ def run_search_stage(config: HarvesterConfig, run_id: str, config_path: Path) ->
             for adapter in adapters:
                 for seed_label, query in expanded:
                     try:
-                        results = adapter.search(query, seed_label, raw_api_dir=paths.raw_api)
+                        results = adapter.search(query, seed_label, raw_api_dir=raw_dir)
                     except httpx.HTTPError as exc:
                         logger.warning("[%s] query %r failed: %s", adapter.name, query, exc)
                         continue
                     for result in results:
+                        result = result.model_copy(update={
+                            "raw_response_path": stored_path(paths.root, result.raw_response_path, legacy=True)
+                        })
                         fh.write(result.model_dump_json() + "\n")
                         if result.image_url in seen_urls:
                             duplicate_urls += 1
-                            continue
                         seen_urls.add(result.image_url)
                         upsert_image_from_search(conn, result, run_id)
                     total += len(results)
