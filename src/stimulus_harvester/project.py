@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -86,7 +87,16 @@ def create_project(path: Path, config: HarvesterConfig) -> Project:
     )
     if root.exists():
         root.rmdir()  # Only the checked empty destination; never recursively remove user files.
-    os.rename(project.root, root)
+    # Windows indexers/scanners can briefly hold a newly written SQLite folder.
+    # Retry this same non-destructive rename only; never overwrite a destination.
+    for attempt in range(6):
+        try:
+            os.rename(project.root, root)
+            break
+        except PermissionError:
+            if os.name != "nt" or attempt == 5:
+                raise
+            time.sleep(0.1 * (attempt + 1))
     return open_project(root)
 
 

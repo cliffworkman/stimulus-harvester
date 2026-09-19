@@ -21,12 +21,11 @@ consistent scene metadata. Final stimulus selection, norming, counterbalancing, 
 any claims about what a stimulus does to a viewer are entirely out of scope here.
 
 CLIP relevance scores and VLM adjudication fields are **review aids, not filters**.
-Nothing in the automated pipeline excludes a candidate because of a low relevance
-score or an unfavorable VLM answer — the only automated exclusions are non-semantic
-(unreadable file, too small, extreme aspect ratio, exact/near-duplicate). Every
-candidate that survives those mechanical checks stays visible in the review app, sorted
-by relevance so the most promising ones surface first, until a human explicitly
-accepts, marks maybe, or rejects it.
+The mechanical filter handles unreadable files, size, aspect ratio and duplicates.
+Optional observable-property screening has a separate, project-configured rule layer
+and auditable eligible/excluded/review-required queues. Screening never changes the
+investigator's accepted/maybe/rejected label. Excluded candidates remain inspectable.
+See [screening](docs/screening.md) for its evidence model and current validation limits.
 
 ### Explicit non-goals
 
@@ -142,8 +141,9 @@ Key sections:
 - `search.commons` — optional Wikimedia Commons MediaWiki API discovery; requires
   an operator email or project URL in `contact`. Extended metadata is preserved as
   source claims, including HTML and uncertain licenses. See [discovery](docs/discovery.md).
-- `filter` — the **only** thresholds that can hard-exclude a candidate, and they are
-  all mechanical (dimensions, aspect ratio, icon-sized, exact/near duplicate).
+- `filter` — mechanical checks (dimensions, aspect ratio, icon-sized, exact/near duplicate).
+- `screening` — optional detector observations and project-rule dispositions, separate
+  from mechanical filtering and investigator decisions.
 - `clip` — model choice and the positive/negative prompt lists used for ranking.
 - `vlm` — off by default (`backend: noop`). Set `backend: ollama` and fill in
   `ollama_model` to enable structured, observable-property-only adjudication. The
@@ -287,6 +287,14 @@ actually loads, so a run's exact settings are never ambiguous after the fact.
 
 ## Known limitations
 
+Observable-property screening is available through shared services and the CLI:
+`screen`, `screening-report`, and `screening-override`. It preserves observations,
+project-rule evaluations, and investigator overrides separately. Two optional local
+human-presence detectors are available for evaluation; no production default or
+absence guarantee is asserted. See [screening configuration and evidence](docs/screening.md).
+The supplied strict example requires human review even after `not_detected`. Existing
+VLM annotations remain separate. Legacy exports do not enforce screening queues.
+
 - `clip.squash_temperature` is a starting heuristic; tune it after inspecting real
   score distributions.
 - Openverse/SearXNG response field names may drift from what this code expects if
@@ -307,9 +315,9 @@ actually loads, so a run's exact settings are never ambiguous after the fact.
   lost, just not usable without adding `pillow-heif`).
 - No per-domain download rate limiting — a single slow or rate-limiting host could be
   hit by many concurrent requests if many results happen to share a domain.
-- **With the default `vlm.backend: noop`, there is no automated screening for people
-  or faces in frame** — only human reviewers catch this in the review app. Treat an
-  unreviewed "accepted" export accordingly.
+- **With the default no-op VLM and no screening policy, there is no automated
+  human-presence observation.** Optional dedicated detectors require explicit
+  configuration; they do not prove absence and do not validate legacy exports.
 - The review app has no authentication. Fine for local, single-machine use; revisit if
   multiple people will review concurrently over a network.
 - A Crawl4AI page-extraction fallback is deliberately not implemented in this pass

@@ -19,6 +19,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Choose CPU or CUDA wheels explicitly before this extra; see docs/screening.md.
+screening = ["torch==2.8.0", "torchvision==0.23.0"]
+benchmark = ["torch==2.8.0", "torchvision==0.23.0", "psutil>=5.9,<8"]
 # Heavy, GPU-relevant. Install a CUDA-matched torch wheel FIRST (matching your local
 # driver/CUDA runtime), then install this extra. open_clip_torch declares a loose
 # torch dependency, so if torch is not already satisfied, pip may pull a default

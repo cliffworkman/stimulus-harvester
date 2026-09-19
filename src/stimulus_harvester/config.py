@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
+from stimulus_harvester.screening.config import ScreeningConfig
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -169,6 +170,7 @@ class HarvesterConfig(BaseModel):
     vlm: VlmConfig = Field(default_factory=VlmConfig)
     review: ReviewConfig = Field(default_factory=ReviewConfig)
     export: ExportConfig = Field(default_factory=ExportConfig)
+    screening: ScreeningConfig = Field(default_factory=ScreeningConfig)
 
 
 def load_config(path: Path) -> HarvesterConfig:

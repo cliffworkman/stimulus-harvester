@@ -44,7 +44,7 @@ def _run(project, stage: str, **options):
     click.echo(f"operation-id: {result.operation_id}")
     if result.status == "partial":
         click.echo(
-            "Discovery completed partially; successful pages are retained. Inspect discovery-report.",
+            "Operation completed partially; inspect discovery-report or screening-report for retained evidence.",
             err=True,
         )
     elif result.status != "succeeded":
@@ -168,6 +168,86 @@ def filter_cmd(project_path, run_id):
 def score_cmd(project_path, run_id, vlm):
     """CLIP ranking, plus optional local VLM annotations; requires [clip]."""
     click.echo(json.dumps(_run(_project(project_path, run_id), "score", vlm=vlm)))
+
+
+@cli.command("screen")
+@project_options
+@click.option(
+    "--screening-config",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Screening-only YAML policy; saved with this operation.",
+)
+@click.option(
+    "--reuse-raw",
+    is_flag=True,
+    help="Reinterpret compatible saved detections; no inference or downloads.",
+)
+def screen_cmd(project_path, run_id, screening_config, reuse_raw):
+    import yaml
+    from stimulus_harvester.screening.config import ScreeningConfig
+
+    try:
+        config = (
+            ScreeningConfig.model_validate(
+                yaml.safe_load(screening_config.read_text(encoding="utf-8"))
+            ).model_dump(mode="json")
+            if screening_config
+            else None
+        )
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(
+        json.dumps(
+            _run(
+                _project(project_path, run_id),
+                "screen",
+                screening_config=config,
+                reuse_raw=reuse_raw,
+            ),
+            indent=2,
+        )
+    )
+
+
+@cli.command("screening-report")
+@project_options
+@click.option("--disposition", type=click.Choice(["eligible", "excluded", "review_required"]))
+@click.option("--history/--no-history", default=True)
+def screening_report_cmd(project_path, run_id, disposition, history):
+    click.echo(
+        json.dumps(
+            services.screening_report(
+                _project(project_path, run_id), disposition=disposition, include_history=history
+            ),
+            indent=2,
+        )
+    )
+
+
+@cli.command("screening-override")
+@project_options
+@click.option(
+    "--candidate", "candidate_id", required=True, help="Candidate UUID or primary local ID."
+)
+@click.option(
+    "--disposition", required=True, type=click.Choice(["eligible", "excluded", "review_required"])
+)
+@click.option("--reviewer", required=True)
+@click.option("--note", default=None)
+def screening_override_cmd(project_path, run_id, candidate_id, disposition, reviewer, note):
+    click.echo(
+        json.dumps(
+            _run(
+                _project(project_path, run_id),
+                "screen-override",
+                candidate_id=candidate_id,
+                disposition=disposition,
+                reviewer=reviewer,
+                note=note,
+            ),
+            indent=2,
+        )
+    )
 
 
 @cli.command("review")

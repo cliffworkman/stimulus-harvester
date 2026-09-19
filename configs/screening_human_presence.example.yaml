@@ -1,0 +1,28 @@
+# An explicitly chosen pilot configuration, NOT a validated production default.
+# These two thresholds are illustrative, uncalibrated COCO person-score cutoffs.
+# For a strict no-human-presence study, negative detector output still needs review.
+detectors:
+  - id: human-detector
+    property: human_presence
+    model: fasterrcnn_resnet50_fpn_v2
+    weights: COCO_V1
+    device: cpu
+    threads: 2
+    enabled: true
+    low_threshold: 0.1
+    high_threshold: 0.5
+    output_floor: 0.01
+    max_detections: 300
+    nms_threshold: 0.5
+rules:
+  - id: no-human-presence
+    version: "pilot-1"
+    property: human_presence
+    source: human-detector
+    outcomes:
+      detected: excluded
+      not_detected: review_required
+      uncertain: review_required
+      error: review_required
+      not_run: review_required
+aggregation: excluded_then_review_required

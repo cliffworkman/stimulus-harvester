@@ -30,6 +30,7 @@ __all__ = [
     "review_application",
     "candidate_evidence",
     "discovery_diagnostics",
+    "screening_report",
 ]
 
 
@@ -43,6 +44,14 @@ class OperationResult:
 
 
 def _invoke(project: Project, stage: str, options: dict):
+    if stage == "screen":
+        from stimulus_harvester.screening.engine import run_screen
+
+        return run_screen(project, **options)
+    if stage == "screen-override":
+        from stimulus_harvester.screening.engine import override
+
+        return override(project, **options)
     if stage == "search":
         from stimulus_harvester.search import run_search_stage
 
@@ -85,7 +94,15 @@ def run_stage(
     cancelled: Callable[[], bool] | None = None,
     **options,
 ) -> OperationResult:
-    if stage not in {"search", "download", "filter", "score", "export"}:
+    if stage not in {
+        "search",
+        "download",
+        "filter",
+        "score",
+        "export",
+        "screen",
+        "screen-override",
+    }:
         raise ValueError(f"Unknown stage: {stage}")
     project = path if isinstance(path, Project) else open_project(path)
     operation_id = new_id("operation")
@@ -130,7 +147,13 @@ def run_stage(
                 if progress:
                     progress({"operation_id": operation_id, "stage": stage, "status": "started"})
                 result = _invoke(project, stage, options)
-                status = result["discovery_status"] if stage == "search" else "succeeded"
+                status = (
+                    result["discovery_status"]
+                    if stage == "search"
+                    else result.get("stage_status", "succeeded")
+                    if stage == "screen"
+                    else "succeeded"
+                )
                 error = None
                 if status == "failed":
                     error = {
@@ -199,7 +222,19 @@ def candidate_evidence(path: Path | Project, local_id: str) -> dict:
     project = path if isinstance(path, Project) else open_project(path)
     conn = init_db(project.paths.db_path)
     try:
-        return read_evidence(conn, local_id)
+        result = read_evidence(conn, local_id)
+        from stimulus_harvester.screening.engine import report_from_connection
+
+        report = report_from_connection(conn, project)
+        candidate = conn.execute(
+            "SELECT candidate_id FROM legacy_ids WHERE local_id=?", (local_id,)
+        ).fetchone()
+        if candidate:
+            result["screening"] = {
+                key: [r for r in report[key] if r["candidate_id"] == candidate[0]]
+                for key in ("candidates", "observations", "evaluations", "overrides")
+            }
+        return result
     finally:
         conn.close()
 
@@ -217,3 +252,10 @@ def discovery_diagnostics(path: Path | Project, *, operation_id=None, provider_o
         }
     finally:
         conn.close()
+
+
+def screening_report(path: Path | Project, **options):
+    from stimulus_harvester.screening.engine import screening_report as report
+
+    project = path if isinstance(path, Project) else open_project(path)
+    return report(project, **options)
