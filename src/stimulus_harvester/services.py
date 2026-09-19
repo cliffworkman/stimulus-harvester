@@ -29,6 +29,7 @@ __all__ = [
     "OperationResult",
     "review_application",
     "candidate_evidence",
+    "discovery_diagnostics",
 ]
 
 
@@ -50,6 +51,7 @@ def _invoke(project: Project, stage: str, options: dict):
             project.root.name,
             project.paths.config_snapshot_path,
             project_root=project.root,
+            detailed=True,
         )[1]
     if stage == "download":
         from stimulus_harvester.download import run_download_stage
@@ -127,9 +129,15 @@ def run_stage(
             else:
                 if progress:
                     progress({"operation_id": operation_id, "stage": stage, "status": "started"})
-                outcome = OperationResult(
-                    operation_id, stage, "succeeded", _invoke(project, stage, options)
-                )
+                result = _invoke(project, stage, options)
+                status = result["discovery_status"] if stage == "search" else "succeeded"
+                error = None
+                if status == "failed":
+                    error = {
+                        "type": "DiscoveryFailure",
+                        "message": "Discovery failed; inspect discovery-report for persisted request and setup diagnostics",
+                    }
+                outcome = OperationResult(operation_id, stage, status, result, error)
         except (KeyboardInterrupt, SystemExit) as exc:
             interrupted = exc
             outcome = OperationResult(
@@ -192,5 +200,20 @@ def candidate_evidence(path: Path | Project, local_id: str) -> dict:
     conn = init_db(project.paths.db_path)
     try:
         return read_evidence(conn, local_id)
+    finally:
+        conn.close()
+
+
+def discovery_diagnostics(path: Path | Project, *, operation_id=None, provider_order=None):
+    from stimulus_harvester.search.coverage import coverage_report
+    from stimulus_harvester.search.evidence import read_attempts
+
+    project = path if isinstance(path, Project) else open_project(path)
+    conn = init_db(project.paths.db_path)
+    try:
+        return {
+            "coverage": coverage_report(conn, provider_order, operation_id),
+            "events": read_attempts(conn, operation_id),
+        }
     finally:
         conn.close()

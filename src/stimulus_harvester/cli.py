@@ -42,7 +42,12 @@ def _run(project, stage: str, **options):
     except (ValueError, OSError, RuntimeError) as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo(f"operation-id: {result.operation_id}")
-    if result.status != "succeeded":
+    if result.status == "partial":
+        click.echo(
+            "Discovery completed partially; successful pages are retained. Inspect discovery-report.",
+            err=True,
+        )
+    elif result.status != "succeeded":
         raise click.ClickException(f"{stage}: {result.status}: {result.error}")
     return result.result
 
@@ -85,6 +90,28 @@ def status_cmd(project_path: Path | None, run_id: str | None):
     click.echo(json.dumps(services.project_status(_project(project_path, run_id)), indent=2))
 
 
+@cli.command("discovery-report")
+@project_options
+@click.option(
+    "--operation-id", default=None, help="Limit evidence and coverage to one search operation."
+)
+@click.option(
+    "--provider-order",
+    multiple=True,
+    help="Repeated provider names define incremental coverage order.",
+)
+def discovery_report_cmd(project_path, run_id, operation_id, provider_order):
+    """Print request/engine failures and descriptive provider overlap as JSON."""
+    project = _project(project_path, run_id)
+    try:
+        report = services.discovery_diagnostics(
+            project, operation_id=operation_id, provider_order=provider_order or None
+        )
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(json.dumps(report, indent=2))
+
+
 @cli.command("search")
 @click.option(
     "--config", "config_path", type=click.Path(exists=True, dir_okay=False, path_type=Path)
@@ -112,9 +139,9 @@ def search_cmd(config_path: Path | None, run_name: str | None, project_path: Pat
             project = services.create_project(root, config)
     except (ValueError, OSError, RuntimeError) as exc:
         raise click.ClickException(str(exc)) from exc
-    total = _run(project, "search")
+    summary = _run(project, "search")
     click.echo(
-        f"run-id: {project.root.name}\nproject: {project.root}\nFound {total} discovery record(s)."
+        f"run-id: {project.root.name}\nproject: {project.root}\nFound {summary['source_occurrences']} discovery record(s)."
     )
 
 

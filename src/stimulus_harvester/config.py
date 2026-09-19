@@ -15,25 +15,42 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class OpenverseConfig(BaseModel):
+class ProviderRequestConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    request_timeout_seconds: float = Field(15.0, gt=0, le=300)
+    request_delay_seconds: float = Field(1.0, ge=0, le=60)
+    max_retries: int = Field(2, ge=0, le=5)
+    retry_backoff_seconds: float = Field(1.0, ge=0, le=60)
+    max_backoff_seconds: float = Field(30.0, ge=0, le=60)
+    max_response_bytes: int = Field(10_000_000, ge=1024, le=100_000_000)
+    user_agent: str = "StimulusHarvester/0.1 (local research discovery)"
+
+
+class OpenverseConfig(ProviderRequestConfig):
     enabled: bool = True
     base_url: str = "https://api.openverse.org/v1/images/"
-    page_size: int = 20
-    max_pages_per_query: int = 3
-    request_timeout_seconds: float = 15.0
-    request_delay_seconds: float = 1.0
+    page_size: int = Field(20, ge=1, le=500)
+    max_pages_per_query: int = Field(3, ge=1, le=100)
 
 
-class SearxngConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class SearxngConfig(ProviderRequestConfig):
     enabled: bool = False
     endpoint_url: str | None = None
     categories: str = "images"
-    request_timeout_seconds: float = 15.0
-    max_results_per_query: int = 40
+    max_results_per_query: int = Field(40, ge=1, le=10000)
+    max_pages_per_query: int = Field(1, ge=1, le=100)
+
+
+class CommonsConfig(ProviderRequestConfig):
+    enabled: bool = False
+    base_url: str = "https://commons.wikimedia.org/w/api.php"
+    # Required when enabled: Wikimedia asks for a descriptive agent with operator contact.
+    contact: str | None = None
+    page_size: int = Field(5, ge=1, le=10)
+    max_pages_per_query: int = Field(3, ge=1, le=100)
+    maxlag: int = Field(5, ge=1, le=60)
+    retry_backoff_seconds: float = Field(5.0, ge=0, le=60)
 
 
 class QueryExpansionConfig(BaseModel):
@@ -51,6 +68,7 @@ class SearchConfig(BaseModel):
     seed_queries: list[str]
     openverse: OpenverseConfig = Field(default_factory=OpenverseConfig)
     searxng: SearxngConfig = Field(default_factory=SearxngConfig)
+    commons: CommonsConfig = Field(default_factory=CommonsConfig)
     query_expansion: QueryExpansionConfig = Field(default_factory=QueryExpansionConfig)
 
 
@@ -61,7 +79,9 @@ class DownloadConfig(BaseModel):
     timeout_seconds: float = 20.0
     max_retries: int = 2
     retry_backoff_seconds: float = 2.0
-    user_agent: str = "stimulus-harvester/0.1 (academic research; contact: set REVIEWER_EMAIL in .env)"
+    user_agent: str = (
+        "stimulus-harvester/0.1 (academic research; contact: set REVIEWER_EMAIL in .env)"
+    )
     max_file_size_bytes: int = 25_000_000
 
 

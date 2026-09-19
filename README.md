@@ -139,6 +139,9 @@ Key sections:
 - `search.searxng` — optional second backend; only runs if `enabled: true` and
   `endpoint_url` is set. Many public SearXNG instances disable `format=json` for abuse
   prevention, so you likely need a self-hosted instance.
+- `search.commons` — optional Wikimedia Commons MediaWiki API discovery; requires
+  an operator email or project URL in `contact`. Extended metadata is preserved as
+  source claims, including HTML and uncertain licenses. See [discovery](docs/discovery.md).
 - `filter` — the **only** thresholds that can hard-exclude a candidate, and they are
   all mechanical (dimensions, aspect ratio, icon-sized, exact/near duplicate).
 - `clip` — model choice and the positive/negative prompt lists used for ranking.
@@ -336,14 +339,17 @@ actually loads, so a run's exact settings are never ambiguous after the fact.
 
 ## Adding a new search backend
 
-1. Add a config model in `config.py` (mirror `OpenverseConfig`/`SearxngConfig`) and
+1. Add a config model in `config.py` inheriting `ProviderRequestConfig` and
    wire it into `SearchConfig`.
 2. Implement `search/your_backend.py` with a class extending
-   `search.base.SearchAdapter`: implement `search(query, seed_query, *, raw_api_dir)`
-   returning `list[models.SearchResult]`, and make sure you write your raw API
-   response(s) under `raw_api_dir` before returning.
-3. Register it in `search/__init__.py::_build_adapters` behind its own `enabled` flag.
-4. Add a mocked-HTTP test mirroring `tests/test_openverse_adapter.py`.
+   `search.http.PagedAdapter`: implement `iter_pages(query, seed_query, *, raw_api_dir)`
+   yielding `SearchPage` batches. Use `request_page` for durable request evidence
+   and `normalize_items` to retain source ordering and isolate malformed items.
+   Preserve the full provider record in `SearchResult.provider_metadata`.
+3. Register it in `search/__init__.py::PROVIDERS` behind its own `enabled` flag.
+4. Add mocked paging, partial-failure, metadata, and overlap tests mirroring
+   `tests/test_discovery_reliability.py`. The inherited `search()` remains available
+   for callers that need a collected list, but project ingestion uses pages.
 
 No other module needs to change — `download`, `filter`, `score`, `review`, and
 `export` all operate on the common `SearchResult`/DB schema, not on any
@@ -355,7 +361,7 @@ backend-specific shape.
 configs/prison_inside_cell.yaml   task-specific queries/prompts/VLM schema
 src/stimulus_harvester/
   cli.py, config.py, models.py, paths.py, logging_utils.py, provenance.py
-  search/    Openverse + optional SearXNG adapters, query expansion
+  search/    Openverse, optional SearXNG/Commons, request evidence, overlap diagnostics
   download/  threaded downloader with full provenance
   filter/    non-semantic quality + duplicate detection
   score/     CLIP ranking (rubric.py is pure math, no torch import) + pluggable VLM
@@ -374,3 +380,13 @@ The full suite runs without the `[clip]` extra installed (no torch/open_clip
 required) — all torch/open_clip imports in `score/clip_ranker.py` are lazy, and
 `score/rubric.py` (the actual scoring math) has no ML dependency at all. All HTTP is
 mocked with `respx`; no test touches the network or loads a real model.
+
+## Development provenance
+
+stimulus-upscaler was conceived and scientifically directed by Cliff Workman as part of a broader effort to make experimental stimulus development more reproducible, auditable, and researcher-controlled.
+
+The core product concept, scientific requirements, workflow, provenance commitments, and acceptance criteria were defined by Workman. Substantial software implementation was carried out with AI coding agents, principally Anthropic Claude Code and OpenAI Codex, under human direction and review.
+
+Claude Code and Codex contributed materially to code generation and refactoring, tests, validation, documentation, and implementation of the application's benchmarking, remote-compute, provenance, and review infrastructure. Their involvement should not be interpreted as independent scientific authorship: the research problem, methodological decisions, and product direction were human-defined, while the coding agents served as implementation collaborators.
+
+The repository is intentionally explicit about this lineage. The goal is neither to obscure AI assistance nor to attribute scientific conception to the tools that implemented it.

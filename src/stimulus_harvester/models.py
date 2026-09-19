@@ -59,6 +59,8 @@ class SearchResult(BaseModel):
     result_order: int | None = None
     query_lineage: dict = Field(default_factory=dict)
     provider_metadata: dict = Field(default_factory=dict)
+    discovery_attempt_id: str | None = None
+    query_id: str | None = None
 
 
 class DownloadStatus(str, Enum):
