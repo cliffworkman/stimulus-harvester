@@ -159,6 +159,9 @@ approved assembly workflow must enforce its explicit screening/review requiremen
 
 ## Real benchmark procedure
 
+For explicit target-property labels, blinded review, guarded development/held-out
+analysis, and threshold replay, follow [empirical acceptance](screening-acceptance.md).
+
 ```console
 python -m pip install -e ".[benchmark]"
 python -m stimulus_harvester.screening.benchmark --manifest human-labels.json --output new-benchmark-folder --model fasterrcnn_resnet50_fpn_v2 --device cpu --threads 2 --low 0.1 --high 0.5

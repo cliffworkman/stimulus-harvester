@@ -92,6 +92,7 @@ def run(manifest, output, config):
             if not path.is_absolute():
                 path = manifest.parent / path
             result = {"image_id": item["image_id"], "sha256": item["sha256"], "timestamp": now()}
+            raw = None
             try:
                 if file_hash(path) != item["sha256"]:
                     raise ValueError("Benchmark image hash mismatch")
@@ -102,7 +103,7 @@ def run(manifest, output, config):
                 result.update(
                     status="error",
                     score=None,
-                    raw=None,
+                    raw=raw,
                     error={"type": type(exc).__name__, "message": str(exc)},
                 )
             predictions.append(result)

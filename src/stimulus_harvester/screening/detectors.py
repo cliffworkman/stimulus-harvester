@@ -35,7 +35,14 @@ def normalize(raw, config):
             or not all(math.isfinite(x) for x in box)
         ):
             raise ValueError("Malformed detection score/box")
-        if not (0 <= box[0] <= box[2] <= width and 0 <= box[1] <= box[3] <= height):
+        # Float32 resizing can put an edge fractionally outside the integer image
+        # (observed: 1630.000122 for height 1630). Keep raw coordinates untouched;
+        # accept at most one thousandth of a pixel, not genuinely out-of-frame boxes.
+        tolerance = 0.001
+        if not (
+            -tolerance <= box[0] <= box[2] <= width + tolerance
+            and -tolerance <= box[1] <= box[3] <= height + tolerance
+        ):
             raise ValueError("Detection box outside oriented image")
         if item["class"] == "person":
             people.append(score)
