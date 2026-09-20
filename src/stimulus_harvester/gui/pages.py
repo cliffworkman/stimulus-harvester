@@ -394,7 +394,7 @@ class ScreenPage(Page):
         row = QHBoxLayout()
         button(row, "Save explicit policy", self.save_policy)
         button(row, "Disable configured screening", self.disable_screening)
-        self.run_button = button(row, "Run configured screening", lambda: self.submit("screen"))
+        self.run_button = button(row, "Run configured screening", self.run_screening)
         form.addRow(row)
         setup_box.addWidget(group)
         self.counts = text_label()
@@ -408,6 +408,16 @@ class ScreenPage(Page):
             candidate_split(self.browser, self.inspector), "Saved observations & images"
         )
         self.config = None
+
+    def run_screening(self):
+        if self.window.confirm(
+            "Run configured screening?",
+            "This explicitly starts local inference. Missing pretrained weights download on first use "
+            "(about 167 MiB for ResNet50 v2 or 74 MiB for MobileNet320) to the user's Torch cache. "
+            "No weights are included in the core installer. Exact weight identity and SHA-256 are "
+            "recorded with observations. Detector scores do not establish human absence.",
+        ):
+            self.submit("screen")
 
     def save_policy(self):
         if not self.window.confirm(

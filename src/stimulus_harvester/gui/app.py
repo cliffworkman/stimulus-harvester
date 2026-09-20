@@ -17,6 +17,12 @@ def main():
         ) from exc
     app = QApplication.instance() or QApplication(sys.argv[:1])
     app.setApplicationName("Stimulus Harvester")
+    from stimulus_harvester import __version__
+    from importlib.resources import files
+    from PySide6.QtGui import QIcon
+
+    app.setApplicationVersion(__version__)
+    app.setWindowIcon(QIcon(str(files("stimulus_harvester").joinpath("resources/harvester.ico"))))
     app.setOrganizationName("Stimulus Modernization Suite")
     window = Window()
     window.show()

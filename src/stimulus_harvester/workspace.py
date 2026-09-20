@@ -117,6 +117,7 @@ def dependency_states(*, probe=False, ollama_url="http://localhost:11434"):
                     capture_output=True,
                     text=True,
                     timeout=20,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                 )
                 if run.returncode:
                     raise RuntimeError(run.stderr)

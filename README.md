@@ -394,6 +394,11 @@ mocked with `respx`; no test touches the network or loads a real model.
 
 ## Development provenance
 
+The unpublished Windows **0.2.0rc1** installer/portable distribution and optional
+ML boundary are described in [release packaging](docs/release-packaging.md).
+The six-stage desktop includes Help → User guide. Core launch requires no Torch,
+model weights, Git or repository checkout. Public release remains a separate step.
+
 stimulus-upscaler was conceived and scientifically directed by Cliff Workman as part of a broader effort to make experimental stimulus development more reproducible, auditable, and researcher-controlled.
 
 The core product concept, scientific requirements, workflow, provenance commitments, and acceptance criteria were defined by Workman. Substantial software implementation was carried out with AI coding agents, principally Anthropic Claude Code and OpenAI Codex, under human direction and review.

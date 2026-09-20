@@ -25,6 +25,9 @@ class Window(QMainWindow):
         self.setWindowTitle("Stimulus Harvester — Research stimulus discovery & adjudication")
         self.resize(1260, 940)
         self.setMinimumSize(820, 650)
+        help_menu = self.menuBar().addMenu("&Help")
+        help_menu.addAction("&User guide", self.show_guide)
+        help_menu.addAction("&About Stimulus Harvester", self.show_about)
         self.session = Session(self, adapter)
         self.system_palette = QApplication.instance().palette()
         self.system_style = QApplication.instance().style().objectName()
@@ -304,6 +307,33 @@ class Window(QMainWindow):
         if reply.action in {"preview_queries", "diagnostics", "search"}:
             self.discover.report(reply.action, reply.value, reply.status)
             self.details_toggle.setChecked(True)
+
+    def show_about(self):
+        from stimulus_harvester import __version__
+
+        QMessageBox.about(
+            self, "About Stimulus Harvester",
+            f"Stimulus Harvester {__version__}\nResearch stimulus discovery & adjudication\n"
+            "MIT · Stimulus Harvester contributors\nNo production detector default.\n"
+            "Third-party license inventory accompanies the distribution.",
+        )
+
+    def show_guide(self):
+        from importlib.resources import files
+        from PySide6.QtWidgets import QDialog, QTextBrowser, QDialogButtonBox
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Stimulus Harvester user guide")
+        dialog.resize(760, 650)
+        box = QVBoxLayout(dialog)
+        browser = QTextBrowser()
+        browser.setOpenExternalLinks(False)
+        browser.setMarkdown(files("stimulus_harvester").joinpath("resources/USER-GUIDE.md").read_text(encoding="utf-8"))
+        box.addWidget(browser)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(dialog.reject)
+        box.addWidget(buttons)
+        dialog.exec()
 
     def closeEvent(self, event):
         if self.session.busy:

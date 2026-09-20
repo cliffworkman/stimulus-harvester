@@ -50,6 +50,7 @@ def git_commit(cwd: Path | None = None) -> str | None:
             text=True,
             timeout=5,
             check=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         if result.returncode == 0:
             return result.stdout.strip()
