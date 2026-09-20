@@ -44,12 +44,15 @@ def _write_identity(root: Path, metadata: dict) -> None:
     os.replace(temporary, manifest)
 
 
-def open_project(path: Path) -> Project:
+def open_project(path: Path, *, validate_config: bool = True) -> Project:
     root = Path(path).expanduser().resolve()
     paths = RunPaths(root)
-    if not paths.db_path.is_file() or not paths.config_snapshot_path.is_file():
+    if not paths.db_path.is_file() or (
+        validate_config and not paths.config_snapshot_path.is_file()
+    ):
         raise ValueError(f"Not a Harvester project or legacy run: {root}")
-    load_run_config(root)  # Validate before any migration.
+    if validate_config:
+        load_run_config(root)  # Validate before any migration of mutable projects.
     # Reject incompatible/tampered manifests before migrating a legacy database.
     if (root / "project.json").exists():
         manifest = json.loads((root / "project.json").read_text(encoding="utf-8"))

@@ -95,6 +95,13 @@ assert client.get('/static/style.css').status_code == 200
 assert client.get('/static/review.js').status_code == 200
 assert client.get('/images/missing').status_code == 404
 print('installed wheel browser smoke passed')
+from stimulus_harvester.frozen.demo import demonstration
+result = demonstration(Path(sys.argv[2]).parent / 'wheel frozen demo 研究')
+assert result['old_freeze_and_assembly_unchanged']
+assert result['assembly1']['stimulus_count'] == 2
+assert result['new_assembly']['stimulus_count'] == 1
+assert services.verify_frozen_package(result['export']['path'], expected_sha256=result['export']['manifest_sha256'])['valid']
+print('installed wheel frozen workflow passed')
 """
     smoke = subprocess.run(
         [sys.executable, "-I", "-c", script, str(installed), str(tmp_path / "wheel project")],
@@ -105,3 +112,4 @@ print('installed wheel browser smoke passed')
     )
     assert smoke.returncode == 0, smoke.stdout + smoke.stderr
     assert "installed wheel browser smoke passed" in smoke.stdout
+    assert "installed wheel frozen workflow passed" in smoke.stdout

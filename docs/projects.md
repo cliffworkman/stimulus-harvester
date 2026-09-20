@@ -30,7 +30,8 @@ working projection. `candidates`, `legacy_ids`, `assets`, `asset_locations`, `di
 and `acquisitions` provide explicit lineage relationships. Source claims remain visible
 through browser detail/evidence endpoints and `lineage_LABEL.jsonl` export sidecars.
 Flat CSV/JSONL remain compatible first-source projections. The existing license export
-policy still uses that first source; choosing among conflicting source claims is deferred.
+policy still uses that first source. [Frozen exports](freezing.md) preserve all retained
+source-specific claims with an explicit no-filter policy.
 
 ## Migration and relocation
 
@@ -69,7 +70,8 @@ start/completion/error events, and write structured results. Stage-manifest snap
 and export snapshots live under `operations/OPERATION_ID/`. Search raw responses use
 per-operation directories. Normal reruns do not overwrite earlier operation evidence.
 Legacy stage projections and manifest files remain mutable; this is deliberately not
-a full event-sourcing rewrite or a freeze system.
+a full event-sourcing rewrite. The separate [freeze system](freezing.md) captures these
+records in immutable scientific snapshots.
 Requests capture software/Python/platform versions, schema version, git commit when
 available, and the configuration hash. Failure to copy operation evidence is reported
 as a failed operation rather than silently claiming complete success.
@@ -88,8 +90,9 @@ stage calls are compatibility APIs and do not offer the same operation-level gua
 `images/accepted/` is **non-authoritative convenience output**. It may retain copies
 from previously accepted decisions. Browser review no longer adds copies automatically;
 export writes a conspicuous README, and browser/CLI messages explain the limitation.
-Current review state/manifests are the working membership record. The future authoritative
-mechanism will be frozen decisions followed by deterministic versioned assembly.
+Current review state/manifests are the working membership record. Authoritative research
+membership uses frozen decisions followed by deterministic versioned assembly; see
+[the freeze workflow](freezing.md).
 
 The HTML contact sheet now uses the same selected rows as CSV/JSONL. Summary JSON still
 describes the whole project. These are working reports, not self-contained frozen exports.

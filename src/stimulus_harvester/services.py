@@ -31,6 +31,10 @@ __all__ = [
     "candidate_evidence",
     "discovery_diagnostics",
     "screening_report",
+    "freeze_validate",
+    "frozen_artifact",
+    "list_frozen_artifacts",
+    "verify_frozen_package",
 ]
 
 
@@ -44,6 +48,18 @@ class OperationResult:
 
 
 def _invoke(project: Project, stage: str, options: dict):
+    if stage == "freeze-create":
+        from stimulus_harvester.frozen.snapshot import create
+
+        return create(project, **options)
+    if stage == "assemble":
+        from stimulus_harvester.frozen.materialize import assemble
+
+        return assemble(project, **options)
+    if stage == "export-frozen":
+        from stimulus_harvester.frozen.materialize import export_frozen
+
+        return export_frozen(project, **options)
     if stage == "screen":
         from stimulus_harvester.screening.engine import run_screen
 
@@ -102,9 +118,15 @@ def run_stage(
         "export",
         "screen",
         "screen-override",
+        "freeze-create",
+        "assemble",
+        "export-frozen",
     }:
         raise ValueError(f"Unknown stage: {stage}")
-    project = path if isinstance(path, Project) else open_project(path)
+    frozen_input = stage in {"assemble", "export-frozen"}
+    project = (
+        path if isinstance(path, Project) else open_project(path, validate_config=not frozen_input)
+    )
     operation_id = new_id("operation")
     with project_lock(project.root):
         evidence = project.root / "operations" / operation_id
@@ -121,12 +143,14 @@ def run_stage(
             "platform": platform.platform(),
             "git_commit": git_commit(),
             "schema_version": project.schema_version,
-            "config_sha256": hashlib.sha256(
-                project.paths.config_snapshot_path.read_bytes()
-            ).hexdigest(),
+            "input_mode": "immutable_artifact" if frozen_input else "current_project",
+            "config_sha256": None
+            if frozen_input
+            else hashlib.sha256(project.paths.config_snapshot_path.read_bytes()).hexdigest(),
         }
         (evidence / "request.json").write_text(json.dumps(params, indent=2), encoding="utf-8")
-        shutil.copyfile(project.paths.config_snapshot_path, evidence / "config_snapshot.yaml")
+        if not frozen_input:
+            shutil.copyfile(project.paths.config_snapshot_path, evidence / "config_snapshot.yaml")
         conn = init_db(project.paths.db_path)
         conn.execute(
             "INSERT INTO operations VALUES (?, ?, ?, ?)",
@@ -181,7 +205,7 @@ def run_stage(
             ACTIVE_OPERATION.reset(token)
         # Snapshots isolate each operation from the mutable legacy stage files.
         try:
-            if project.paths.manifests.exists():
+            if not frozen_input and project.paths.manifests.exists():
                 shutil.copytree(project.paths.manifests, evidence / "manifests")
             if stage == "export" and project.paths.exports.exists():
                 shutil.copytree(project.paths.exports, evidence / "exports")
@@ -259,3 +283,54 @@ def screening_report(path: Path | Project, **options):
 
     project = path if isinstance(path, Project) else open_project(path)
     return report(project, **options)
+
+
+def freeze_validate(path: Path | Project, *, request):
+    from stimulus_harvester.frozen.snapshot import validate
+
+    project = path if isinstance(path, Project) else open_project(path)
+    with project_lock(project.root):
+        return validate(project, request=request)
+
+
+def frozen_artifact(path: Path | Project, artifact_id: str):
+    from stimulus_harvester.frozen.store import load
+
+    project = path if isinstance(path, Project) else open_project(path, validate_config=False)
+    conn = init_db(project.paths.db_path)
+    try:
+        manifest, root = load(conn, project, artifact_id)
+        return {"path": str(root), "manifest": manifest}
+    finally:
+        conn.close()
+
+
+def list_frozen_artifacts(path: Path | Project):
+    from stimulus_harvester.frozen.store import ensure_schema
+
+    project = path if isinstance(path, Project) else open_project(path, validate_config=False)
+    conn = init_db(project.paths.db_path)
+    try:
+        ensure_schema(conn)
+        return [
+            dict(r)
+            for r in conn.execute(
+                "SELECT artifact_id,kind,freeze_id,parent_id,created_at,relative_path,manifest_sha256 FROM frozen_artifacts ORDER BY rowid"
+            )
+        ]
+    finally:
+        conn.close()
+
+
+def verify_frozen_package(path, *, expected_sha256=None):
+    from stimulus_harvester.frozen.store import verify_directory
+
+    manifest = verify_directory(path, expected_sha256=expected_sha256)
+    return {
+        "valid": True,
+        "artifact_id": manifest["artifact_id"],
+        "kind": manifest["kind"],
+        "freeze_id": manifest["freeze_id"],
+        "files_verified": len(manifest["files"]),
+        "expected_hash_checked": expected_sha256 is not None,
+    }

@@ -169,7 +169,8 @@ stimulus-harvester export --project "my research project"
 
 Open/migrate an existing run with `stimulus-harvester project open --project PATH`.
 No discovery rerun is required. See [project identity, migration, services, and
-limitations](docs/projects.md). There is no freeze/assembly or desktop GUI yet.
+limitations](docs/projects.md). Immutable research packages use the
+[freeze, assembly, and frozen export workflow](docs/freezing.md). There is no desktop GUI yet.
 `images/accepted/` is a **legacy, non-authoritative convenience folder** that can
 retain copies from previous decisions; it is not an approved frozen stimulus set.
 

@@ -14,11 +14,13 @@ from stimulus_harvester.paths import find_run_dir, new_run_id
 from stimulus_harvester.storage import new_id
 
 
-def _project(project_path: Path | None, run_id: str | None):
+def _project(project_path: Path | None, run_id: str | None, *, frozen=False):
     if bool(project_path) == bool(run_id):
         raise click.UsageError("Specify exactly one of --project PATH or legacy --run-id ID")
     try:
-        return services.open_project(project_path or find_run_dir(run_id))
+        return services.open_project(
+            project_path or find_run_dir(run_id), validate_config=not frozen
+        )
     except (ValueError, OSError, RuntimeError) as exc:
         raise click.ClickException(str(exc)) from exc
 
@@ -269,6 +271,12 @@ def review_cmd(project_path, run_id, host, port, reviewer_email):
 @cli.command("export")
 @project_options
 @click.option(
+    "--freeze",
+    "freeze_id",
+    help="Export immutable evidence from this freeze; creates an assembly if needed.",
+)
+@click.option("--assembly", "assembly_id", help="Export an existing immutable assembly.")
+@click.option(
     "--label", type=click.Choice(["accepted", "maybe", "rejected", "all"]), default="accepted"
 )
 @click.option("--license-filter", type=click.Choice(["open_only", "all"]), default="all")
@@ -278,7 +286,28 @@ def review_cmd(project_path, run_id, host, port, reviewer_email):
     type=click.Choice(["csv", "jsonl", "html", "summary"]),
     default=("csv", "jsonl", "html", "summary"),
 )
-def export_cmd(project_path, run_id, label, license_filter, formats):
+def export_cmd(project_path, run_id, label, license_filter, formats, freeze_id, assembly_id):
+    if freeze_id or assembly_id:
+        if (
+            label != "accepted"
+            or license_filter != "all"
+            or set(formats) != {"csv", "jsonl", "html", "summary"}
+        ):
+            raise click.UsageError(
+                "Frozen exports use complete frozen membership, all source claims, and all package formats"
+            )
+        click.echo(
+            json.dumps(
+                _run(
+                    _project(project_path, run_id, frozen=True),
+                    "export-frozen",
+                    freeze_id=freeze_id,
+                    assembly_id=assembly_id,
+                ),
+                indent=2,
+            )
+        )
+        return
     result = _run(
         _project(project_path, run_id),
         "export",
@@ -289,8 +318,110 @@ def export_cmd(project_path, run_id, label, license_filter, formats):
     for name, path in result.items():
         click.echo(f"{name}: {path}")
     click.echo(
-        "Legacy accepted-folder copies are non-authoritative; no freeze/assembly exists yet."
+        "This is a mutable legacy export. For a research package use export --freeze ID or --assembly ID."
     )
+
+
+@cli.group("freeze")
+def freeze_cmd():
+    """Validate and capture immutable scientific review snapshots."""
+
+
+@freeze_cmd.command("validate")
+@project_options
+@click.option(
+    "--request",
+    "request_path",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+)
+def freeze_validate_cmd(project_path, run_id, request_path):
+    try:
+        report = services.freeze_validate(
+            _project(project_path, run_id),
+            request=json.loads(request_path.read_text(encoding="utf-8")),
+        )
+    except (ValueError, OSError, RuntimeError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(json.dumps(report, indent=2))
+    if not report["valid"]:
+        raise click.ClickException(
+            "Freeze validation found blockers; see the complete report above"
+        )
+
+
+@freeze_cmd.command("create")
+@project_options
+@click.option(
+    "--request",
+    "request_path",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+)
+def freeze_create_cmd(project_path, run_id, request_path):
+    try:
+        request = json.loads(request_path.read_text(encoding="utf-8"))
+    except (ValueError, OSError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(
+        json.dumps(_run(_project(project_path, run_id), "freeze-create", request=request), indent=2)
+    )
+
+
+@freeze_cmd.command("list")
+@project_options
+def frozen_list_cmd(project_path, run_id):
+    click.echo(
+        json.dumps(
+            services.list_frozen_artifacts(_project(project_path, run_id, frozen=True)), indent=2
+        )
+    )
+
+
+@freeze_cmd.command("show")
+@project_options
+@click.option("--id", "artifact_id", required=True)
+def frozen_show_cmd(project_path, run_id, artifact_id):
+    try:
+        result = services.frozen_artifact(_project(project_path, run_id, frozen=True), artifact_id)
+    except (ValueError, OSError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(json.dumps(result, indent=2))
+
+
+@cli.command("assemble")
+@project_options
+@click.option("--freeze", "freeze_id", required=True)
+@click.option("--parent-assembly", "parent_assembly_id")
+def assemble_cmd(project_path, run_id, freeze_id, parent_assembly_id):
+    click.echo(
+        json.dumps(
+            _run(
+                _project(project_path, run_id, frozen=True),
+                "assemble",
+                freeze_id=freeze_id,
+                parent_assembly_id=parent_assembly_id,
+            ),
+            indent=2,
+        )
+    )
+
+
+@cli.command("verify-frozen")
+@click.option(
+    "--package",
+    "package_path",
+    required=True,
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+)
+@click.option("--sha256", "expected_sha256")
+def verify_frozen_cmd(package_path, expected_sha256):
+    """Verify a standalone frozen package, without a project or SQLite database."""
+    try:
+        result = services.verify_frozen_package(package_path, expected_sha256=expected_sha256)
+    except (ValueError, OSError, KeyError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(json.dumps(result, indent=2))
 
 
 def main() -> None:
