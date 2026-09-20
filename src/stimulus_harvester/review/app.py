@@ -23,12 +23,19 @@ from stimulus_harvester.config import HarvesterConfig
 from stimulus_harvester.models import ReviewLabel
 from stimulus_harvester.paths import RunPaths
 from stimulus_harvester.review import db as db_module
+from stimulus_harvester.review.service import record_review
 from stimulus_harvester.storage import candidate_evidence, project_lock, resolve_path
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 _STATIC_DIR = Path(__file__).parent / "static"
 
-_JSON_COLUMNS = ("tags", "filter_reasons", "clip_positive_scores", "clip_negative_scores", "vlm_fields")
+_JSON_COLUMNS = (
+    "tags",
+    "filter_reasons",
+    "clip_positive_scores",
+    "clip_negative_scores",
+    "vlm_fields",
+)
 
 
 class LabelUpdate(BaseModel):
@@ -56,7 +63,9 @@ def row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     return data
 
 
-def create_app(run_dir: Path, config: HarvesterConfig, reviewer_email: str | None = None) -> FastAPI:
+def create_app(
+    run_dir: Path, config: HarvesterConfig, reviewer_email: str | None = None
+) -> FastAPI:
     paths = RunPaths(root=run_dir)
     app = FastAPI(title=f"Stimulus Harvester Review - {run_dir.name}")
     app.state.paths = paths
@@ -178,8 +187,11 @@ def create_app(run_dir: Path, config: HarvesterConfig, reviewer_email: str | Non
 
         try:
             with project_lock(run_dir):
-                row = db_module.set_review_label(
-                    conn, local_id, label=update.label, notes=update.notes,
+                row = record_review(
+                    conn,
+                    local_id,
+                    label=update.label,
+                    notes=update.notes,
                     scene_cluster_id=update.scene_cluster_id,
                     reviewer_email=app.state.reviewer_email,
                 )

@@ -102,6 +102,27 @@ assert result['assembly1']['stimulus_count'] == 2
 assert result['new_assembly']['stimulus_count'] == 1
 assert services.verify_frozen_package(result['export']['path'], expected_sha256=result['export']['manifest_sha256'])['valid']
 print('installed wheel frozen workflow passed')
+from importlib.util import find_spec
+if find_spec('PySide6'):
+    import os
+    os.environ['QT_QPA_PLATFORM'] = 'offscreen'
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtCore import QEventLoop, QTimer
+    from stimulus_harvester.gui.window import Window
+    application = QApplication([])
+    window = Window()
+    assert window.tabs.count() == 6
+    window.session.submit('open', path=str(project.root))
+    loop = QEventLoop()
+    timer = QTimer()
+    timer.timeout.connect(lambda: loop.quit() if not window.session.busy else None)
+    timer.start(20)
+    QTimer.singleShot(15000, loop.quit)
+    loop.exec()
+    timer.stop()
+    assert not window.session.busy and window.session.state.project_id == project.project_id
+    window.close()
+    print('installed wheel desktop smoke passed')
 """
     smoke = subprocess.run(
         [sys.executable, "-I", "-c", script, str(installed), str(tmp_path / "wheel project")],
@@ -113,3 +134,7 @@ print('installed wheel frozen workflow passed')
     assert smoke.returncode == 0, smoke.stdout + smoke.stderr
     assert "installed wheel browser smoke passed" in smoke.stdout
     assert "installed wheel frozen workflow passed" in smoke.stdout
+    from importlib.util import find_spec
+
+    if find_spec("PySide6"):
+        assert "installed wheel desktop smoke passed" in smoke.stdout

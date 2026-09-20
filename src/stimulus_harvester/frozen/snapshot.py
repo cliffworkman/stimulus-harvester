@@ -396,12 +396,17 @@ def validate(project, *, request):
         conn.close()
 
 
-def create(project, *, request):
+def create(project, *, request, expected_snapshot_sha256=None):
     conn = init_db(project.paths.db_path)
     try:
         store.ensure_schema(conn)
         conn.execute("BEGIN IMMEDIATE")
         data = snapshot(conn, project, request)
+        if (
+            expected_snapshot_sha256
+            and store.sha(store.canonical(data)) != expected_snapshot_sha256
+        ):
+            raise ValueError("Freeze state changed since confirmation; validate and confirm again")
         if not data["validation"]["valid"]:
             raise ValueError("Freeze blocked: " + json.dumps(data["validation"]["blockers"]))
         # Freeze the exact config used by validation, and detect out-of-band edits.

@@ -48,6 +48,22 @@ class OperationResult:
 
 
 def _invoke(project: Project, stage: str, options: dict):
+    if stage == "screen-policy":
+        from stimulus_harvester.workspace import configure_person_screening
+
+        return configure_person_screening(project, **options)
+    if stage == "configure":
+        from stimulus_harvester.workspace import save_configuration
+
+        return save_configuration(project, **options)
+    if stage == "review":
+        from stimulus_harvester.review.service import record_review
+
+        conn = init_db(project.paths.db_path)
+        try:
+            return record_review(conn, require_identity=True, **options)
+        finally:
+            conn.close()
     if stage == "freeze-create":
         from stimulus_harvester.frozen.snapshot import create
 
@@ -121,11 +137,16 @@ def run_stage(
         "freeze-create",
         "assemble",
         "export-frozen",
+        "configure",
+        "review",
+        "screen-policy",
     }:
         raise ValueError(f"Unknown stage: {stage}")
     frozen_input = stage in {"assemble", "export-frozen"}
     project = (
-        path if isinstance(path, Project) else open_project(path, validate_config=not frozen_input)
+        path
+        if isinstance(path, Project)
+        else open_project(path, validate_config=not frozen_input and stage != "configure")
     )
     operation_id = new_id("operation")
     with project_lock(project.root):

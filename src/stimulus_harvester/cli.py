@@ -92,6 +92,52 @@ def status_cmd(project_path: Path | None, run_id: str | None):
     click.echo(json.dumps(services.project_status(_project(project_path, run_id)), indent=2))
 
 
+@project_cmd.command("configure")
+@project_options
+@click.option(
+    "--config", "config_path", required=True, type=click.Path(exists=True, path_type=Path)
+)
+def configure_project_cmd(project_path, run_id, config_path):
+    """Validate and record a resolved configuration update (also used by desktop)."""
+    try:
+        config = load_config(config_path)
+    except (ValueError, OSError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(
+        json.dumps(
+            _run(
+                _project(project_path, run_id, frozen=True),
+                "configure",
+                configuration=config.model_dump(mode="json"),
+            ),
+            indent=2,
+        )
+    )
+
+
+@cli.command("set-review")
+@project_options
+@click.option("--local-id", required=True, help="Candidate's primary legacy/local identifier.")
+@click.option("--label", required=True, type=click.Choice(["accepted", "maybe", "rejected"]))
+@click.option("--reviewer", required=True)
+@click.option("--notes", default="")
+def set_review_cmd(project_path, run_id, local_id, label, reviewer, notes):
+    """Record an explicit investigator decision using the native/browser review transition."""
+    click.echo(
+        json.dumps(
+            _run(
+                _project(project_path, run_id),
+                "review",
+                local_id=local_id,
+                label=label,
+                reviewer_email=reviewer,
+                notes=notes,
+            ),
+            indent=2,
+        )
+    )
+
+
 @cli.command("discovery-report")
 @project_options
 @click.option(

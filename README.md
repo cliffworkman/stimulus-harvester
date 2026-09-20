@@ -170,7 +170,9 @@ stimulus-harvester export --project "my research project"
 Open/migrate an existing run with `stimulus-harvester project open --project PATH`.
 No discovery rerun is required. See [project identity, migration, services, and
 limitations](docs/projects.md). Immutable research packages use the
-[freeze, assembly, and frozen export workflow](docs/freezing.md). There is no desktop GUI yet.
+[freeze, assembly, and frozen export workflow](docs/freezing.md). The optional
+[PySide6 desktop](docs/desktop.md) provides the six-stage research workflow:
+`python -m pip install -e ".[gui]"` then `stimulus-harvester-gui --project PATH`.
 `images/accepted/` is a **legacy, non-authoritative convenience folder** that can
 retain copies from previous decisions; it is not an approved frozen stimulus set.
 

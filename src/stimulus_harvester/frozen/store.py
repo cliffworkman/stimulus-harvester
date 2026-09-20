@@ -8,6 +8,7 @@ import os
 import platform
 import shutil
 import sys
+import time
 from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 
@@ -170,7 +171,16 @@ def publish(conn, project, stage, manifest):
         ),
     )
     # Caller holds an IMMEDIATE transaction. Only complete, verified staging is published.
-    os.rename(stage, destination)
+    # Windows indexers can briefly hold freshly written evidence. Retry only the
+    # same non-overwriting rename, while retaining the same database transaction.
+    for attempt in range(6):
+        try:
+            os.rename(stage, destination)
+            break
+        except PermissionError:
+            if os.name != "nt" or attempt == 5:
+                raise
+            time.sleep(0.1 * (attempt + 1))
     conn.commit()
     return {
         "artifact_id": manifest["artifact_id"],

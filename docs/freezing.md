@@ -212,10 +212,10 @@ Maintain project/package backups for archival preservation.
 
 ## Shared APIs, demo, and verification
 
-Future desktop views should call `services.freeze_validate`, `services.run_stage` with
+The [desktop views](desktop.md) call `services.freeze_validate`, `services.run_stage` with
 `freeze-create`/`assemble`/`export-frozen`, `services.frozen_artifact`,
 `services.list_frozen_artifacts`, and `services.verify_frozen_package`. CLI callbacks only
-parse options and present service results. No PySide6 code is included in this checkpoint.
+parse options and present service results. Scientific transitions remain in the backend.
 
 ```bash
 python -m stimulus_harvester.frozen.demo --output "new synthetic demo directory"
