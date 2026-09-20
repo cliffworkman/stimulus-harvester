@@ -3,37 +3,40 @@
 import copy
 import json
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QKeySequence, QShortcut, QDesktopServices
-from PySide6.QtCore import QUrl
+from PySide6.QtCore import Qt, QUrl
+from PySide6.QtGui import QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
-    QHBoxLayout,
+    QAbstractItemView,
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QFileDialog,
     QFormLayout,
     QGroupBox,
+    QHBoxLayout,
     QLineEdit,
-    QPlainTextEdit,
-    QComboBox,
-    QCheckBox,
-    QSpinBox,
-    QFileDialog,
-    QTreeWidget,
-    QTreeWidgetItem,
     QListWidget,
     QListWidgetItem,
-    QAbstractItemView,
+    QPlainTextEdit,
+    QSpinBox,
     QTabWidget,
+    QTreeWidget,
+    QTreeWidgetItem,
+    QVBoxLayout,
+    QWidget,
 )
 
+from stimulus_harvester.search.http import http_url
+
 from .components import (
+    CandidateBrowser,
+    Inspector,
     button,
-    text_label,
+    candidate_split,
     details,
     show_json,
-    Inspector,
-    CandidateBrowser,
-    candidate_split,
+    text_label,
 )
 
 
@@ -162,6 +165,55 @@ class ProjectPage(Page):
             self.loaded_config = copy.deepcopy(state.config)
 
 
+def provider_configuration_error(key, value):
+    value = value.strip()
+    if key == "searxng" and not http_url(value):
+        return "Enter the HTTP(S) search URL of your SearXNG instance."
+    if key == "commons" and not (
+        http_url(value) or ("@" in value and not any(c.isspace() for c in value))
+    ):
+        return "Enter your operator email address or project URL for Commons."
+    return ""
+
+
+class ProviderSetupDialog(QDialog):
+    def __init__(self, parent, key, value):
+        super().__init__(parent)
+        self.key = key
+        self.setWindowTitle("Configure SearXNG" if key == "searxng" else "Configure Wikimedia Commons")
+        layout = QVBoxLayout(self)
+        layout.addWidget(text_label(
+            "SearXNG needs a search endpoint from an instance you operate or have permission to use."
+            if key == "searxng" else
+            "Wikimedia Commons requires an operator contact in requests. Enter your email or project URL."
+        ))
+        self.value = QLineEdit(value)
+        self.value.setAccessibleName("SearXNG endpoint" if key == "searxng" else "Commons contact")
+        form = QFormLayout()
+        form.addRow("Endpoint (required)" if key == "searxng" else "Contact (required)", self.value)
+        layout.addLayout(form)
+        self.error = text_label(provider_configuration_error(key, value))
+        layout.addWidget(self.error)
+        self.buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        self.buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Use these settings")
+        self.buttons.accepted.connect(self.accept)
+        self.buttons.rejected.connect(self.reject)
+        layout.addWidget(self.buttons)
+        self.value.setFocus()
+        self.value.selectAll()
+        self.resize(520, self.sizeHint().height())
+
+    def accept(self):
+        error = provider_configuration_error(self.key, self.value.text())
+        if error:
+            self.error.setText(error)
+            self.value.setFocus()
+            return
+        super().accept()
+
+
 class DiscoverPage(Page):
     def __init__(self, window):
         super().__init__(
@@ -169,6 +221,7 @@ class DiscoverPage(Page):
             "Discover candidates, inspect all source claims, then acquire the original images. Provider failures are reported separately from zero results.",
         )
         self.config = None
+        self.provider_setup_dialog = None
         self.views = QTabWidget()
         self.box.addWidget(self.views, 1)
         setup = QWidget()
@@ -207,6 +260,14 @@ class DiscoverPage(Page):
         self.contact.setPlaceholderText("Operator email or project URL (required for Commons)")
         form.addRow("SearXNG endpoint", self.endpoint)
         form.addRow("Commons contact", self.contact)
+        for key in ("searxng", "commons"):
+            self.providers[key].clicked.connect(
+                lambda checked, key=key: self.configure_provider(key) if checked else None
+            )
+        form.addRow(text_label(
+            "Enable SearXNG or Commons to configure it. Unconfigured providers stay unchecked. "
+            "Changes are saved with Save settings & discover."
+        ))
         expansion = QHBoxLayout()
         self.expand = QCheckBox("Deterministic query expansion")
         self.query_limit = QSpinBox()
@@ -230,7 +291,7 @@ class DiscoverPage(Page):
         button(
             actions,
             "Save settings & discover",
-            lambda: self.window.configure_then("search", self.configuration()),
+            self.discover,
         )
         button(actions, "Download originals", lambda: self.submit("download"))
         button(actions, "Coverage & failures", lambda: self.submit("diagnostics"))
@@ -249,6 +310,38 @@ class DiscoverPage(Page):
         self.views.addTab(candidate_split(self.browser, self.inspector), "Candidates & sources")
         self.query_preview = details()
         self.views.addTab(self.query_preview, "Query / coverage report")
+
+    def configure_provider(self, key):
+        if self.provider_setup_dialog is not None:
+            self.provider_setup_dialog.raise_()
+            self.provider_setup_dialog.activateWindow()
+            return False
+        field = self.endpoint if key == "searxng" else self.contact
+        if not provider_configuration_error(key, field.text()):
+            return True
+        self.views.setCurrentIndex(0)
+        dialog = ProviderSetupDialog(self, key, field.text())
+        self.provider_setup_dialog = dialog
+        self.providers[key].setChecked(False)
+        accepted = False
+        try:
+            accepted = dialog.exec() == QDialog.DialogCode.Accepted
+            if accepted:
+                field.setText(dialog.value.text().strip())
+        finally:
+            self.providers[key].setChecked(accepted)
+            self.provider_setup_dialog = None
+            dialog.deleteLater()
+        return accepted
+
+    def discover(self):
+        if self.provider_setup_dialog is not None:
+            return
+        # Recheck edited values before saving or issuing any provider request.
+        for key in ("searxng", "commons"):
+            if self.providers[key].isChecked() and not self.configure_provider(key):
+                return
+        self.window.configure_then("search", self.configuration())
 
     def configuration(self):
         config = copy.deepcopy(self.config)
@@ -289,15 +382,16 @@ class DiscoverPage(Page):
             self.config = copy.deepcopy(state.config)
             search = self.config["search"]
             self.seeds.setPlainText("\n".join(search["seed_queries"]))
+            self.endpoint.setText(search["searxng"]["endpoint_url"] or "")
+            self.contact.setText(search["commons"]["contact"] or "")
             for key, check in self.providers.items():
-                check.setChecked(search[key]["enabled"])
+                value = self.endpoint.text() if key == "searxng" else self.contact.text()
+                check.setChecked(search[key]["enabled"] and not provider_configuration_error(key, value))
                 pages, count = self.limits[key]
                 pages.setValue(search[key]["max_pages_per_query"])
                 count.setValue(
                     search[key]["max_results_per_query" if key == "searxng" else "page_size"]
                 )
-            self.endpoint.setText(search["searxng"]["endpoint_url"] or "")
-            self.contact.setText(search["commons"]["contact"] or "")
             expansion = search["query_expansion"]
             self.expand.setChecked(expansion["enabled"])
             self.query_limit.setValue(expansion["max_expanded_queries"])

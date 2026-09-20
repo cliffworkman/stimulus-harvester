@@ -209,7 +209,7 @@ def main():
         subprocess.run([str(compiler),"/nologo","/optimize+","/platform:x64",f"/target:{'exe' if cli else 'winexe'}",
             "/reference:System.Windows.Forms.dll",f"/win32icon:{payload / 'harvester.ico'}",
             f"/out:{payload / name}"] + (["/define:CLI"] if cli else []) + [str(REPO / "release/Launcher.cs")],check=True)
-    write_json(payload / "release.json", {"product":"Stimulus Harvester","version":version,"tier":"core-gui", "platform":"windows-x64", "python":"3.13.15","signed":False,"baseline_commit":"b2ac2df3b1cb751c329494cdb99487e30a6946f6", "ml_included":False,"model_weights_included":False,"dependency_count":len(license_records)})
+    write_json(payload / "release.json", {"product":"Stimulus Harvester","version":version,"tier":"core-gui", "platform":"windows-x64", "python":"3.13.15","signed":False,"baseline_commit":"19b7267c8527271ffaf97fe4c3bf551e3d4c6c50", "ml_included":False,"model_weights_included":False,"dependency_count":len(license_records)})
     write_json(payload / "payload-sha256.json", {p.relative_to(payload).as_posix():sha(p) for p in sorted(payload.rglob("*")) if p.is_file()})
     portable_zip(payload, args.output / f"{payload.name}-portable.zip")
     subprocess.run([str(args.inputs / "inno/ISCC.exe"), f"/DPayload={payload}",f"/DDestination={args.output}",f"/DVersion={version}",str(REPO / "release/windows.iss")],check=True)

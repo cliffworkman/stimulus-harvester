@@ -1,11 +1,13 @@
-# Stimulus Harvester 0.2.0rc1
+# Stimulus Harvester 0.2.0rc2
 
 Research stimulus discovery & adjudication. Release candidate for evaluation;
 no production person detector has been selected.
 
 ## Install and first launch
 
-Windows 10/11 x64: run the approved `windows-x64-setup.exe`, or extract the entire
+Windows 11 x64 has been tested on the existing host. Windows 10 x64 is the
+installer-declared/expected minimum, not an empirically validated platform.
+Run the approved `windows-x64-setup.exe`, or extract the entire
 portable ZIP to an empty folder. Launch **Stimulus Harvester.exe**. No Python, Git,
 Codex or model installation is needed. The RC is unsigned; Windows may display an
 unknown-publisher/SmartScreen warning. Compare the download against the separately
@@ -25,7 +27,10 @@ writing to the same project at once.
 2. **Discover:** enter queries, choose providers, preview coverage, search and
    download originals. Openverse needs network access; service limits can apply.
    SearXNG requires your instance URL. Commons requires your real operator-contact
-   user agent. Misconfiguration and remote errors are reported distinctly.
+   user agent. Enabling either provider opens configuration immediately if its
+   required setting is missing or invalid; cancelling leaves it unchecked. Settings
+   are saved when you choose Save settings & discover. Misconfiguration and remote
+   errors are reported distinctly.
 3. **Screen:** optional. Core does not contain Torch, OpenCLIP, CUDA or weights.
    Leave screening unconfigured and perform human review, or explicitly provision
    ML, select a detector, thresholds and project rule. `not_detected` never proves

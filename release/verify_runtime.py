@@ -42,7 +42,7 @@ def main():
     assert sys.flags.isolated and sys.flags.dont_write_bytecode
     assert shutil.which("git") is None
     passed("isolated runtime without checkout, Git, PYTHONPATH or developer site packages")
-    assert stimulus_harvester.__version__ == importlib.metadata.version("stimulus-harvester") == json.loads((root/'release.json').read_text())["version"] == "0.2.0rc1"
+    assert stimulus_harvester.__version__ == importlib.metadata.version("stimulus-harvester") == json.loads((root/'release.json').read_text())["version"] == "0.2.0rc2"
     passed("coherent release, runtime and package versions")
     for module in ("torch","torchvision","open_clip","pip"):
         assert importlib.util.find_spec(module) is None, module

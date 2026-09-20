@@ -8,11 +8,11 @@ import pytest
 
 pytest.importorskip("PySide6")
 pytest.importorskip("pytestqt")
-from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QPushButton
+from PySide6.QtCore import QPoint, Qt, QTimer
+from PySide6.QtWidgets import QApplication, QDialogButtonBox, QPushButton
 
 from stimulus_harvester import services, workspace
-from stimulus_harvester.frozen.demo import seed, config, request, run
+from stimulus_harvester.frozen.demo import config, request, run, seed
 from stimulus_harvester.frozen.store import inventory
 from stimulus_harvester.gui.adapter import Adapter, Reply, classify
 from stimulus_harvester.gui.tasks import Worker
@@ -118,6 +118,139 @@ def test_provider_setup_errors_are_not_zero_results(project):
     assert state.providers["searxng"]["state"] == "setup_error"
     assert state.providers["commons"]["state"] == "setup_error"
     assert "contact" in state.providers["commons"]["message"]
+
+
+def test_unconfigured_provider_selection_does_not_rewrite_project(qtbot, window, project):
+    original = project.paths.config_snapshot_path.read_bytes()
+    open_window(qtbot, window, project)
+    assert not window.discover.providers["searxng"].isChecked()
+    assert not window.discover.providers["commons"].isChecked()
+    assert project.paths.config_snapshot_path.read_bytes() == original
+
+
+@pytest.mark.parametrize("key,value", [
+    ("searxng", "https://search.example.invalid/search"),
+    ("commons", "operator@example.invalid"),
+])
+def test_enabling_provider_routes_to_validated_configuration(qtbot, window, project, key, value, monkeypatch):
+    import socket
+
+    from stimulus_harvester.gui.pages import ProviderSetupDialog
+
+    open_window(qtbot, window, project)
+    window.tabs.setCurrentIndex(1)
+    page = window.discover
+    page.seeds.setPlainText("courtyard\n  library study  ")
+    page.synonyms.setText("room,hall; quiet,empty")
+    page.limits[key][0].setValue(7)
+    before = page.configuration()
+    monkeypatch.setattr(socket.socket, "connect", lambda *a, **k: pytest.fail("Setup must not contact a provider"))
+    monkeypatch.setattr(window, "configure_then", lambda *a: pytest.fail("Setup must not start discovery"))
+
+    def configure():
+        dialog = QApplication.activeModalWidget()
+        assert isinstance(dialog, ProviderSetupDialog) and dialog.key == key
+        assert dialog.error.text() and dialog.value.accessibleName()
+        assert not page.providers[key].isChecked()
+        assert not page.configure_provider(key)
+        page.discover()
+        assert page.provider_setup_dialog is dialog
+        assert len(page.findChildren(ProviderSetupDialog)) == 1
+        dialog.value.setText("invalid value")
+        qtbot.mouseClick(dialog.buttons.button(QDialogButtonBox.StandardButton.Ok), Qt.MouseButton.LeftButton)
+        assert dialog.isVisible() and dialog.error.text()
+        dialog.value.setText(value)
+        qtbot.mouseClick(dialog.buttons.button(QDialogButtonBox.StandardButton.Ok), Qt.MouseButton.LeftButton)
+
+    QTimer.singleShot(0, configure)
+    qtbot.mouseClick(window.discover.providers[key], Qt.MouseButton.LeftButton, pos=QPoint(8, 8))
+    assert window.discover.providers[key].isChecked()
+    field = "endpoint_url" if key == "searxng" else "contact"
+    before["search"][key].update({field: value, "enabled": True})
+    assert page.configuration() == before
+    assert page.seeds.toPlainText() == "courtyard\n  library study  "
+    assert page.views.currentIndex() == 0 and page.provider_setup_dialog is None
+    # Setup prepares the form, preserving the normal explicit save operation.
+    assert getattr(getattr(project.config.search, key), field) is None
+
+
+@pytest.mark.parametrize("key", ["searxng", "commons"])
+def test_cancel_provider_setup_leaves_provider_unchecked(qtbot, window, project, key):
+    open_window(qtbot, window, project)
+    window.tabs.setCurrentIndex(1)
+    page = window.discover
+    page.seeds.setPlainText("Keep my current queries\n研究")
+    before = page.configuration()
+
+    def cancel_incomplete():
+        dialog = QApplication.activeModalWidget()
+        dialog.value.setText("invalid unfinished setting")
+        dialog.accept()
+        assert dialog.isVisible()
+        dialog.reject()
+
+    QTimer.singleShot(0, cancel_incomplete)
+    qtbot.mouseClick(window.discover.providers[key], Qt.MouseButton.LeftButton, pos=QPoint(8, 8))
+    assert not window.discover.providers[key].isChecked()
+    assert not window.discover.configuration()["search"][key]["enabled"]
+    assert page.configuration() == before
+    assert page.views.currentIndex() == 0 and page.provider_setup_dialog is None
+
+
+@pytest.mark.parametrize("key,value", [
+    ("searxng", "https://search.example.invalid/search"),
+    ("commons", "https://example.invalid/project"),
+])
+def test_configured_provider_can_be_enabled_without_prompt(qtbot, window, project, key, value, monkeypatch):
+    from stimulus_harvester.gui.pages import ProviderSetupDialog
+
+    open_window(qtbot, window, project)
+    window.tabs.setCurrentIndex(1)
+    field = window.discover.endpoint if key == "searxng" else window.discover.contact
+    field.setText(value)
+    monkeypatch.setattr(ProviderSetupDialog, "exec", lambda *a: pytest.fail("Valid setup must not prompt again"))
+    qtbot.mouseClick(window.discover.providers[key], Qt.MouseButton.LeftButton, pos=QPoint(8, 8))
+    assert window.discover.providers[key].isChecked()
+
+
+@pytest.mark.parametrize("key", ["searxng", "commons"])
+def test_discover_rechecks_provider_settings_before_saving_or_search(qtbot, window, project, key, monkeypatch):
+    open_window(qtbot, window, project)
+    window.discover.providers[key].setChecked(True)
+    field = window.discover.endpoint if key == "searxng" else window.discover.contact
+    field.clear()
+    monkeypatch.setattr(window, "configure_then", lambda *a: pytest.fail("Cancelled setup must not save or search"))
+    QTimer.singleShot(0, lambda: QApplication.activeModalWidget().reject())
+    window.discover.discover()
+    assert not window.discover.providers[key].isChecked()
+
+
+@pytest.mark.parametrize("key,value", [
+    ("searxng", "https://search.example.invalid/search"),
+    ("commons", "operator@example.invalid"),
+])
+def test_discovery_preflight_resumes_only_after_valid_setup(qtbot, window, project, key, value, monkeypatch):
+    open_window(qtbot, window, project)
+    page = window.discover
+    page.providers[key].setChecked(True)
+    calls = []
+    monkeypatch.setattr(window, "configure_then", lambda *a: calls.append(a))
+
+    def configure():
+        assert not calls
+        page.discover()
+        assert not calls
+        dialog = QApplication.activeModalWidget()
+        assert dialog.key == key
+        dialog.value.setText(value)
+        dialog.accept()
+
+    QTimer.singleShot(0, configure)
+    page.discover()
+    assert len(calls) == 1 and calls[0][0] == "search"
+    field = "endpoint_url" if key == "searxng" else "contact"
+    assert calls[0][1]["search"][key][field] == value
+    assert calls[0][1]["search"][key]["enabled"]
 
 
 def test_query_preview_is_backend_deterministic(project):
@@ -389,6 +522,7 @@ def test_transient_windows_publish_handle_is_retried(project, monkeypatch):
 
 def test_cli_native_review_and_config_parity(qtbot, window, project, tmp_path):
     from click.testing import CliRunner
+
     from stimulus_harvester.cli import cli
     from stimulus_harvester.config import config_to_yaml_str
 
@@ -438,6 +572,7 @@ def test_coverage_report_presented_without_raw_database_concepts(qtbot, window, 
 
 def test_browser_and_native_share_review_transition(project, monkeypatch):
     from fastapi.testclient import TestClient
+
     from stimulus_harvester.review import service
 
     seed(project, "a")
