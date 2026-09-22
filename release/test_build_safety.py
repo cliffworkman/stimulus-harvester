@@ -47,7 +47,7 @@ def test_portable_archive_repeatable_and_relocatable(tmp_path):
 def test_release_metadata_and_hash_lock():
     project=tomllib.loads((build.REPO/'pyproject.toml').read_text())['project']
     from stimulus_harvester import __version__
-    assert project['version']==__version__=='0.2.0rc3'
+    assert project['version']==__version__=='0.2.0rc4'
     assert 'stimulus-harvester-gui' in project['gui-scripts']
     data=json.loads((build.REPO/'release/inputs.json').read_text())
     assert len(data['wheels'])==27

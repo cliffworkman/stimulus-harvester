@@ -1,4 +1,4 @@
-# Stimulus Harvester 0.2.0rc3
+# Stimulus Harvester 0.2.0rc4
 
 Research stimulus discovery & adjudication. Release candidate for evaluation;
 no production person detector has been selected.
@@ -14,7 +14,7 @@ received SHA256SUMS before deciding whether to trust it. A checksum alone does n
 authenticate its publisher. Do not bypass organizational security restrictions.
 
 Keep the application folder intact. Put research projects in a separate writable
-folder, such as Documents. Paths with spaces and `研究` are supported. Prefer a local
+folder, such as Documents. Paths with spaces and `ç ”ç©¶` are supported. Prefer a local
 working copy and sync/backup only when operations are idle; never have two programs
 writing to the same project at once.
 
@@ -28,8 +28,13 @@ writing to the same project at once.
    SearXNG requires your instance URL. Commons requires your real operator-contact
    user agent. Enabling either provider opens configuration immediately if its
    required setting is missing or invalid; cancelling leaves it unchecked. Settings
-   are saved when you choose Save settings & discover. Misconfiguration and remote
-   errors are reported distinctly.
+   are saved when you choose Start a new search. Download pending images handles
+   unattempted results; Retry failed downloads retries eligible failures without
+   repeating searches or previously successful downloads. Found/downloaded/failed/
+   pending counts describe results; unique available images describe shared bytes.
+   Openverse reaching its advertised result boundary is normal completion. A new
+   search starts at page 1; search continuation is not yet available. Misconfiguration
+   and remote errors are reported distinctly.
 3. **Screen:** optional. Core does not contain Torch, OpenCLIP, CUDA or weights.
    Leave screening unconfigured and perform human review, or explicitly provision
    ML, select a detector, thresholds and project rule. `not_detected` never proves
