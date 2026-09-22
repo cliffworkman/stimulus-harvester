@@ -3,6 +3,7 @@
 import copy
 import json
 
+from pydantic import ValidationError
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
@@ -28,6 +29,7 @@ from PySide6.QtWidgets import (
 )
 
 from stimulus_harvester.search.http import http_url
+from stimulus_harvester.screening.config import DetectorConfig
 
 from .components import (
     CandidateBrowser,
@@ -514,6 +516,36 @@ class ScreenPage(Page):
             self.submit("screen")
 
     def save_policy(self):
+        model = self.model.currentData()
+        if model is None:
+            self.window.notice(
+                "No detector selected. Saved screening settings are unchanged. "
+                "Screening is optional; use Disable configured screening to remove an existing policy."
+            )
+            self.model.setFocus()
+            return
+        for field, label in ((self.low, "low"), (self.high, "high")):
+            if not field.text().strip():
+                self.window.notice(f"Enter an explicit {label} threshold for the selected detector. Nothing was saved.")
+                field.setFocus()
+                return
+        try:
+            detector = DetectorConfig(
+                id="desktop-human",
+                property="human_presence",
+                model=model,
+                low_threshold=self.low.text(),
+                high_threshold=self.high.text(),
+                device=self.device.currentText(),
+            )
+        except ValidationError as exc:
+            self.window.notice(f"Invalid screening settings; nothing was saved: {exc}")
+            return
+        policy = self.policy.currentData()
+        if policy is None:
+            self.window.notice("Choose an explicit screening rule. Nothing was saved.")
+            self.policy.setFocus()
+            return
         if not self.window.confirm(
             "Replace screening configuration?",
             "Save the explicitly selected detector, thresholds and rule. Existing observations are preserved; this does not run inference. Custom policies can be edited in Project → Advanced settings.",
@@ -521,11 +553,11 @@ class ScreenPage(Page):
             return
         self.submit(
             "screen-policy",
-            model=self.model.currentData(),
-            low_threshold=self.low.text(),
-            high_threshold=self.high.text(),
-            policy=self.policy.currentData(),
-            device=self.device.currentText(),
+            model=detector.model,
+            low_threshold=detector.low_threshold,
+            high_threshold=detector.high_threshold,
+            policy=policy,
+            device=detector.device,
         )
 
     def disable_screening(self):

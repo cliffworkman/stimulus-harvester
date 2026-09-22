@@ -333,6 +333,157 @@ def test_explicit_policy_validated_by_shared_backend(project):
     assert policy["rules"][0]["outcomes"]["detected"] == "excluded"
 
 
+@pytest.mark.parametrize("selected_then_cleared", [False, True])
+def test_unselected_screen_save_never_submits_blank_detector(
+    qtbot, window, project, monkeypatch, selected_then_cleared
+):
+    open_window(qtbot, window, project)
+    before = project.paths.config_snapshot_path.read_bytes()
+    if selected_then_cleared:
+        window.screen.model.setCurrentIndex(2)
+        window.screen.low.setText("0.23")
+        window.screen.model.setCurrentIndex(0)
+    window.screen.policy.setCurrentIndex(1)
+    monkeypatch.setattr(window, "submit", lambda *a, **kw: pytest.fail("Unselected detector must not be submitted"))
+    window.screen.save_policy()
+    assert "No detector selected" in window.operation.text()
+    assert project.paths.config_snapshot_path.read_bytes() == before
+    assert services.open_project(project.root).config.screening.detectors == []
+    assert window.screen.model.currentData() is None
+    assert window.screen.high.text() == ""
+
+
+@pytest.mark.parametrize("low,high", [("", ""), ("", "0.78"), ("0.23", ""), ("  ", "0.78"), ("oops", "0.78"), ("0.9", "0.2"), ("nan", "0.78")])
+def test_selected_detector_invalid_thresholds_do_not_submit(
+    qtbot, window, project, monkeypatch, low, high
+):
+    open_window(qtbot, window, project)
+    before = project.paths.config_snapshot_path.read_bytes()
+    window.screen.model.setCurrentIndex(2)
+    window.screen.low.setText(low)
+    window.screen.high.setText(high)
+    window.screen.policy.setCurrentIndex(1)
+    monkeypatch.setattr(window, "submit", lambda *a, **kw: pytest.fail("Invalid thresholds must not be submitted"))
+    window.screen.save_policy()
+    assert "saved" in window.operation.text().lower()
+    assert window.screen.low.text() == low
+    assert window.screen.high.text() == high
+    assert project.paths.config_snapshot_path.read_bytes() == before
+
+
+@pytest.mark.parametrize("model_index", [1, 2])
+def test_gui_explicit_detector_saves_and_reopens(qtbot, window, project, model_index):
+    open_window(qtbot, window, project)
+    window.screen.model.setCurrentIndex(model_index)
+    model = window.screen.model.currentData()
+    window.screen.low.setText("0.23")
+    window.screen.high.setText("0.78")
+    window.screen.policy.setCurrentIndex(1)
+    window.screen.save_policy()
+    settle(qtbot, window)
+    saved = services.open_project(project.root).config.screening
+    assert len(saved.detectors) == 1
+    assert (saved.detectors[0].model, saved.detectors[0].low_threshold, saved.detectors[0].high_threshold) == (model, 0.23, 0.78)
+    assert saved.rules[0].id == "strict_zero_human"
+    before = project.paths.config_snapshot_path.read_bytes()
+    window.screen.model.setCurrentIndex(0)
+    window.screen.low.clear()
+    window.screen.high.clear()
+    window.screen.save_policy()
+    assert project.paths.config_snapshot_path.read_bytes() == before
+    window.project.open_action("open")
+    settle(qtbot, window)
+    assert window.screen.model.currentData() == model
+    assert window.screen.low.text() == "0.23"
+    assert window.screen.high.text() == "0.78"
+
+
+@pytest.mark.parametrize("saved_detector", [False, True])
+@pytest.mark.parametrize("save_path", ["advanced", "discover", "generic"])
+def test_unrelated_saves_preserve_screening_and_ignore_pending_controls(
+    qtbot, window, project, monkeypatch, saved_detector, save_path
+):
+    import json
+
+    if saved_detector:
+        run(project, "screen-policy", model="fasterrcnn_mobilenet_v3_large_320_fpn",
+            low_threshold=0.23, high_threshold=0.78, policy="review_all", device="cpu")
+    open_window(qtbot, window, project)
+    expected = project.config.screening.model_dump(mode="json")
+    window.screen.model.setCurrentIndex(1)
+    window.screen.low.clear()
+    window.screen.high.clear()
+    real = services.run_stage
+
+    def stage(path, action, **kwargs):
+        if action == "search":
+            return services.OperationResult("test", action, "succeeded", {})
+        return real(path, action, **kwargs)
+
+    monkeypatch.setattr(services, "run_stage", stage)
+    if save_path == "discover":
+        window.discover.seeds.setPlainText("unchanged screening test")
+        window.discover.discover()
+    else:
+        config_value = project.config.model_dump(mode="json")
+        config_value["run_name"] = "Unrelated configuration edit"
+        if save_path == "advanced":
+            window.project.configuration.setPlainText(json.dumps(config_value))
+            window.project.save_advanced()
+        else:
+            window.submit("configure", {"configuration": config_value})
+    settle(qtbot, window)
+    assert services.open_project(project.root).config.screening.model_dump(mode="json") == expected
+    window.project.open_action("open")
+    settle(qtbot, window)
+    assert window.session.state.config["screening"] == expected
+    if not saved_detector:
+        assert window.screen.model.currentData() is None
+        assert window.screen.low.text() == window.screen.high.text() == ""
+
+
+@pytest.mark.parametrize("key,value", [("searxng", "https://example.test/search"), ("commons", "https://example.test/project")])
+@pytest.mark.parametrize("accept", [False, True])
+def test_provider_setup_never_serializes_pending_screen_fields(
+    qtbot, window, project, monkeypatch, key, value, accept
+):
+    from stimulus_harvester.gui.pages import ProviderSetupDialog
+
+    open_window(qtbot, window, project)
+    before = project.paths.config_snapshot_path.read_bytes()
+    window.screen.model.setCurrentIndex(2)
+    window.screen.low.clear()
+    window.screen.high.clear()
+
+    def dialog_exec(dialog):
+        dialog.value.setText(value)
+        return dialog.DialogCode.Accepted if accept else dialog.DialogCode.Rejected
+
+    monkeypatch.setattr(ProviderSetupDialog, "exec", dialog_exec)
+    window.discover.providers[key].click()
+    assert window.discover.providers[key].isChecked() == accept
+    assert project.paths.config_snapshot_path.read_bytes() == before
+    configuration = window.discover.configuration()
+    assert configuration["screening"]["detectors"] == []
+    window.submit("configure", {"configuration": configuration})
+    settle(qtbot, window)
+    assert services.open_project(project.root).config.screening.detectors == []
+
+
+def test_advanced_blank_detector_remains_strictly_rejected(qtbot, window, project):
+    import json
+
+    open_window(qtbot, window, project)
+    before = project.paths.config_snapshot_path.read_bytes()
+    value = project.config.model_dump(mode="json")
+    value["screening"]["detectors"] = [{"id": "blank", "property": "human_presence", "model": None, "low_threshold": "", "high_threshold": ""}]
+    window.project.configuration.setPlainText(json.dumps(value))
+    window.project.save_advanced()
+    settle(qtbot, window)
+    assert "ValidationError" in window.operation.text()
+    assert project.paths.config_snapshot_path.read_bytes() == before
+
+
 def test_freeze_blockers_navigate_to_candidate(qtbot, window, project):
     a = seed(project, "a", label="maybe")
     open_window(qtbot, window, project)

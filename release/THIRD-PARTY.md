@@ -70,6 +70,6 @@ directly from their maintainers and requires the user's separate terms review.
 This is a bounded engineering inventory and source/notice preservation exercise,
 not a legal certification. Before public distribution, finish binary-level matching
 of vendor native runtime notices/terms and source/build correspondence, check the
-final signed artifact again, and make the relevant source archives available with
+final distribution artifact again, and make the relevant source archives available with
 the binaries. Do not infer that the application's MIT license replaces library
 licenses. No public release is made by this checkpoint.

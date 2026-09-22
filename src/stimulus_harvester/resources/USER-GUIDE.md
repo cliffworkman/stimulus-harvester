@@ -1,4 +1,4 @@
-# Stimulus Harvester 0.2.0rc2
+# Stimulus Harvester 0.2.0rc3
 
 Research stimulus discovery & adjudication. Release candidate for evaluation;
 no production person detector has been selected.
@@ -9,8 +9,7 @@ Windows 11 x64 has been tested on the existing host. Windows 10 x64 is the
 installer-declared/expected minimum, not an empirically validated platform.
 Run the approved `windows-x64-setup.exe`, or extract the entire
 portable ZIP to an empty folder. Launch **Stimulus Harvester.exe**. No Python, Git,
-Codex or model installation is needed. The RC is unsigned; Windows may display an
-unknown-publisher/SmartScreen warning. Compare the download against the separately
+Codex or model installation is needed. Stimulus Harvester's current Windows builds are unsigned. Windows may display an Unknown Publisher or SmartScreen warning. Code signing is intentionally deferred while distribution infrastructure is being reconciled across the Stimulus Modernization Suite. Compare the download against the separately
 received SHA256SUMS before deciding whether to trust it. A checksum alone does not
 authenticate its publisher. Do not bypass organizational security restrictions.
 

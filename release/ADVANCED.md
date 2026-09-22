@@ -10,7 +10,7 @@ specific tested interpreter), install the supplied wheel:
 
 ```powershell
 py -3.12 -m venv harvester-ml
-.\harvester-ml\Scripts\python.exe -m pip install "path\stimulus_harvester-0.2.0rc2-py3-none-any.whl[gui]"
+.\harvester-ml\Scripts\python.exe -m pip install "path\stimulus_harvester-0.2.0rc3-py3-none-any.whl[gui]"
 .\harvester-ml\Scripts\python.exe -m pip install torch==2.8.0 torchvision==0.23.0 --index-url https://download.pytorch.org/whl/cpu
 .\harvester-ml\Scripts\python.exe -m pip check
 .\harvester-ml\Scripts\stimulus-harvester-gui.exe --project "your project"
@@ -42,7 +42,14 @@ The portable archive uses fixed timestamps/order. Compiler/ZIP compression versi
 and generated PE timestamps may affect installer bytes; dependency/content
 reproducibility is provided, not an unverified bit-identical installer claim.
 
-Signing is a separate publication operation using an authorized Authenticode
-certificate and trusted timestamp service. No certificate/private key is stored
-here. Sign both launchers before packaging and the installer afterward; regenerate
-checksums and repeat installed verification of the final signed artifacts.
+## Future suite-level signing procedure (deferred)
+
+The current Windows builds remain unsigned by explicit product decision. Signing
+is not a Checkpoint 8 gate; see SIGNING-POLICY.md. Do not acquire or request a
+certificate, or alter the current binaries, for this stage.
+
+Retained for a separately authorized future suite release: use an authorized
+Authenticode certificate and trusted timestamp service; sign both launchers before
+packaging and the installer afterward. Then regenerate checksums and repeat installed
+verification against those future signed artifacts. No certificate/private key is
+stored here. This future procedure does not apply to the current unsigned candidate.

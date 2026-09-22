@@ -185,6 +185,7 @@ def main():
     shutil.copyfile(REPO / "src/stimulus_harvester/resources/harvester.ico", payload / "harvester.ico")
     shutil.copyfile(REPO / "src/stimulus_harvester/resources/USER-GUIDE.md", payload / "USER-GUIDE.md")
     shutil.copyfile(REPO / "release/ADVANCED.md", payload / "ADVANCED.md")
+    shutil.copyfile(REPO / "release/SIGNING-POLICY.md", payload / "SIGNING-POLICY.md")
     shutil.copytree(REPO / "docs", payload / "docs")
     license_records = licenses(wheels + [wheel], payload, args.inputs)
     source_output = args.output / "third-party-sources"
@@ -213,7 +214,7 @@ def main():
     write_json(payload / "payload-sha256.json", {p.relative_to(payload).as_posix():sha(p) for p in sorted(payload.rglob("*")) if p.is_file()})
     portable_zip(payload, args.output / f"{payload.name}-portable.zip")
     subprocess.run([str(args.inputs / "inno/ISCC.exe"), f"/DPayload={payload}",f"/DDestination={args.output}",f"/DVersion={version}",str(REPO / "release/windows.iss")],check=True)
-    for name in ("release.json","dependency-inventory.json","source-archives.json","THIRD-PARTY.md","USER-GUIDE.md","ADVANCED.md","payload-sha256.json"):
+    for name in ("release.json","dependency-inventory.json","source-archives.json","THIRD-PARTY.md","USER-GUIDE.md","ADVANCED.md","SIGNING-POLICY.md","payload-sha256.json"):
         shutil.copyfile(payload / name, args.output / name)
     shutil.copytree(payload / "licenses", args.output / "licenses")
     shutil.copytree(REPO / "release", args.output / "build-recipe", ignore=shutil.ignore_patterns("__pycache__"))

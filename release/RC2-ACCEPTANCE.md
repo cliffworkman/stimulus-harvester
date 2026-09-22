@@ -20,7 +20,10 @@ This material acceptance fix advances rc1 to rc2. Original rc1 binaries are reta
 The user guide also distinguishes the installer-declared Windows 10 minimum from
 the empirically tested Windows 11 host. No fresh-machine claim follows from this.
 
-Publication remains unauthorized. The owner selected certificate signing; an
-authorized certificate, final signing and post-signing hashes are pending. Native
-redistribution review, fresh Windows and remaining human acceptance gates must be
-reported separately and resolved before publication. No release tag is created here.
+Unsigned distribution is explicitly authorized for this development/portfolio release stage. Signing remains planned future suite-level work and is not a Checkpoint 8 acceptance blocker.
+
+Stimulus Harvester's current Windows builds are unsigned. Windows may display an Unknown Publisher or SmartScreen warning. Code signing is intentionally deferred while distribution infrastructure is being reconciled across the Stimulus Modernization Suite.
+
+Native redistribution review, fresh Windows and remaining human acceptance gates
+remain open. SHA-256 identifies bytes, not the publisher. Final public release authorization still applies to the exact unsigned bytes, hashes, documentation and destination. No tag, upload, publication or announcement is authorized by this policy decision.
+See SIGNING-POLICY.md for the dated decision. Existing binaries are unchanged.

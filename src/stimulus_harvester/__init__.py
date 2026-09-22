@@ -5,4 +5,4 @@ This top-level module intentionally imports nothing else from the package, so th
 open_clip, fastapi) to be installed. Submodules that need them import lazily.
 """
 
-__version__ = "0.2.0rc2"
+__version__ = "0.2.0rc3"
