@@ -27,6 +27,16 @@ failure; other providers still run. Existing projects use their saved config sna
 
 ## Requests and failures
 
+Openverse stops at returned `page_count` or `result_count` boundaries, or a short
+page. Returned page identity is checked; malformed counts are ignored in favor of
+the bounded request configuration. A full last page is not followed by an invalid
+extra request. At the currently documented anonymous 240-result boundary, normal
+exhaustion is explained as a search limit. Only a 401 JSON detail explicitly stating
+the anonymous pagination-depth limit is classified as exhaustion; unrelated 401s
+remain failures and 429 remains throttling. Raw responses/page evidence remain intact.
+Configured page limits are separate from provider exhaustion. New discovery still
+starts at page 1; durable search continuation is not implemented.
+
 Each provider sends requests serially. Defaults: one second between request starts,
 15-second HTTP phase timeout, at most two retries, 30-second maximum retry backoff,
 and a 10 MB decoded response limit. All are configurable under each provider using
@@ -107,6 +117,45 @@ repair utility: rerunning begins a new operation and preserves repeated occurren
 
 ## Descriptive coverage
 
+For ordinary acquisition accounting use `acquisition-report --project PATH` (or
+`--json` for structured output). The desktop shows the same shared-service counts.
+Found, downloaded, failed and pending **results** count distinct candidate records.
+Downloaded results are successful acquisition records; available **image files** count
+distinct SHA-256 asset identities with a current existing, size-matching file.
+This quick view does not rehash every image on refresh. Missing/size-changed successful
+files are reported separately and require restoring the original bytes. Extra
+downloaded results sharing an image are reported separately. Provider rows can overlap
+and must not be summed when the same found result has multiple providers.
+
+`download` selects only never-attempted results. `retry-downloads` selects failures,
+never successes, and appends acquisition evidence. It supports exact provider/query
+and repeated candidate-ID scopes through CLI/service; the desktop deliberately
+exposes the small **Retry failed downloads** action for all eligible failures.
+Server-requested waits are excluded until their recorded deadline. A denial can be
+explicitly retried later but is not automatically repeated within an attempt.
+
+Commons acquisition uses the configured Commons operator contact even when the
+candidate's first discovery was another provider. All source IDs/providers remain
+linked to the acquisition. Missing contact is a setup error, not an invented identity.
+Desktop download actions can configure/save the needed contact without starting a
+new search; pending search inputs are retained and no Screen controls are serialized.
+
+Download evidence adds per-request IDs, attempt number/status, provider/source links,
+the request User-Agent, bounded Content-Type/Retry-After headers, retry outcome and
+server wait deadline. Error bodies are read only up to a 4 KiB prefix plus one byte
+to detect truncation. Only a fixed generic diagnostic category and prefix hash/length
+are retained; arbitrary error text, cookies and authentication headers are omitted.
+Known transient transport/429/5xx errors receive bounded exponential backoff; server
+waits beyond the configured budget defer instead of being shortened. Requests are
+serial within each original host group (default one-second spacing), with concurrency
+across groups. Redirect targets are not independently scheduled.
+
+The acquisition JSON fields are additive; existing records need no migration or
+repair, and historical failures cannot retroactively gain missing HTTP diagnostics.
+Canonical SHA-256 identity, old acquisition rows, source histories, investigator
+decisions and frozen packages are preserved. Downloads verify image bytes before
+promotion from a temporary file; a different existing original is not overwritten.
+
 ```console
 stimulus-harvester discovery-report --project "my research project"
 stimulus-harvester discovery-report --project "my research project" --operation-id OPERATION_ID
@@ -134,7 +183,10 @@ of source quality, construct validity, or scientific eligibility.
   [Wikimedia User-Agent policy](https://foundation.wikimedia.org/wiki/Policy:Wikimedia_Foundation_User-Agent_Policy):
   descriptive application/contact agent, small serial requests, maxlag and backoff.
 
-No live Commons or SearXNG validation is implied by the mocked contract tests. Provider
-schemas, instance access, corpus overlap, and search ordering can change. Discovery
-does not freeze remote data or guarantee complete enumeration. There is no new GUI,
-screening rule, detector, dataset freeze, assembly, or installer in this checkpoint.
+Mocked contract tests do not establish live provider availability. The 2026-09-22
+provider/recovery slice separately verified a bounded live Openverse search and one
+Commons acquisition; SearXNG was not live-tested in that slice. Provider schemas,
+instance access, corpus overlap, and search ordering can change. Discovery does not
+freeze remote data or guarantee complete enumeration. This slice adds acquisition
+counts and retry controls to the existing GUI, with no navigation redesign, screening
+rule, detector, dataset freeze, assembly, or installer changes.

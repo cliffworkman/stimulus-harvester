@@ -30,6 +30,8 @@ from PySide6.QtWidgets import (
 
 from stimulus_harvester.search.http import http_url
 from stimulus_harvester.screening.config import DetectorConfig
+from stimulus_harvester.download.state import format_acquisition_summary
+from stimulus_harvester.search.presentation import discovery_text, issue_message
 
 from .components import (
     CandidateBrowser,
@@ -268,7 +270,7 @@ class DiscoverPage(Page):
             )
         form.addRow(text_label(
             "Enable SearXNG or Commons to configure it. Unconfigured providers stay unchecked. "
-            "Changes are saved with Save settings & discover."
+            "Changes are saved with Start a new search. Download actions also save needed Commons contact settings."
         ))
         expansion = QHBoxLayout()
         self.expand = QCheckBox("Deterministic query expansion")
@@ -292,15 +294,18 @@ class DiscoverPage(Page):
         )
         button(
             actions,
-            "Save settings & discover",
+            "Start a new search",
             self.discover,
         )
-        button(actions, "Download originals", lambda: self.submit("download"))
+        self.download_button = button(actions, "Download pending images", self.download_pending)
+        self.retry_button = button(actions, "Retry failed downloads", self.retry_failed)
         button(actions, "Coverage & failures", lambda: self.submit("diagnostics"))
         form.addRow(actions)
         setup_box.addWidget(controls)
         self.provider_status = text_label()
         setup_box.addWidget(self.provider_status)
+        self.acquisition_summary = text_label()
+        self.box.insertWidget(1, self.acquisition_summary)
         self.discovery_summary = text_label(
             "Preview setup before discovery. Detailed requests and overlap evidence remain available in diagnostics."
         )
@@ -312,6 +317,30 @@ class DiscoverPage(Page):
         self.views.addTab(candidate_split(self.browser, self.inspector), "Candidates & sources")
         self.query_preview = details()
         self.views.addTab(self.query_preview, "Query / coverage report")
+
+    def download_pending(self):
+        self.download_action("download")
+
+    def retry_failed(self):
+        self.download_action("retry-downloads")
+
+    def download_action(self, action):
+        if self.provider_setup_dialog is not None:
+            return
+        # Downloads may use existing Commons sources even if Commons discovery is
+        # now unchecked. Save Discover settings, preserving unrelated saved Screen settings.
+        state = self.window.session.state
+        has_commons = any(s['provider'] == 'commons' for c in state.candidates for s in c['sources'])
+        if has_commons:
+            if not self.configure_provider('commons'):
+                return
+            contact = self.contact.text().strip()
+            if contact != self.config['search']['commons']['contact']:
+                config = self.configuration()
+                config['search']['commons']['contact'] = contact
+                self.window.configure_then(action, config)
+                return
+        self.submit(action)
 
     def configure_provider(self, key):
         if self.provider_setup_dialog is not None:
@@ -374,6 +403,10 @@ class DiscoverPage(Page):
 
     def populate(self, state):
         self.browser.populate(state.candidates)
+        counts = state.status['acquisition']
+        self.acquisition_summary.setText(format_acquisition_summary(counts))
+        self.download_button.setEnabled(counts['pending'] > counts['pending_deferred'])
+        self.retry_button.setEnabled(counts['retry_available'] > 0)
         self.provider_status.setText(
             " · ".join(
                 f"{name}: {entry['state']} — {entry['message']}"
@@ -426,21 +459,21 @@ class DiscoverPage(Page):
                 for r in coverage["pairwise_overlap"]
             ]
             lines += ["\nProvider/query failures:"] + [
-                f"{r.get('provider')}: {r.get('query', 'setup')} — {r.get('error', r.get('status'))}"
+                f"{r.get('provider')}: {r.get('query', 'setup')} — {issue_message(r)}"
                 for r in value["events"]
                 if r.get("status") in {"failed", "engine_errors"}
             ]
             self.query_preview.setPlainText("\n".join(lines))
             self.views.setCurrentIndex(2)
         elif action == "search":
+            self.discovery_summary.setText(discovery_text(value, status))
+            self.query_preview.setPlainText(discovery_text(value, status))
+            self.views.setCurrentIndex(2)
+        elif action in {"download", "retry-downloads"}:
             self.discovery_summary.setText(
-                f"{'Partial discovery' if status == 'partial' else 'Discovery failed' if status == 'failed' else 'Discovery complete'}: {value.get('pages_committed', 0)} pages; {value.get('source_occurrences', 0)} source occurrences.\n"
-                + "\n".join(
-                    f"{r.get('provider', 'provider')}: {r.get('query', 'setup')} — {r.get('error', r.get('status', 'issue'))}"
-                    for r in value.get("issues", [])
-                )
-            )
-            self.views.setCurrentIndex(1 if status == "succeeded" else 0)
+                f"This download operation: {value[0]} succeeded; {value[1]} failed. "
+                "Previous successful images were not requested again. "
+                "Retry failed downloads uses existing results and preserves previous failures.")
 
 
 class ScreenPage(Page):

@@ -202,8 +202,12 @@ python3 -m stimulus_harvester export --run-id RUN_ID --label accepted
 ```
 
 Rerunning `download`/`filter`/`score` processes rows that have not been through that
-stage yet. Failed downloads are also considered attempted; retry-failed behavior is
-not implemented. `search --config` creates a new project; use `search --project PATH`
+stage yet. Failed downloads remain distinct from pending work: use
+`retry-downloads --project PATH` to retry them without repeating discovery or
+redownloading successes. Optional `--provider`, `--query`, and repeated `--candidate-id`
+scopes intersect; provider/query match the same source relationship. Server-requested
+waits remain deferred. `acquisition-report --project PATH` explains counts; add `--json`
+for machine-readable definitions. `search --config` creates a new project; use `search --project PATH`
 to add discoveries to an existing project using its stored configuration.
 
 - `search` — expands queries, calls enabled backends, writes raw API responses to
@@ -316,8 +320,9 @@ VLM annotations remain separate. Legacy exports do not enforce screening queues.
 - Exact/near-duplicate detection is per-run only, not across multiple runs.
 - No HEIC/AVIF decoding; such files are recorded as `unreadable_file` (not silently
   lost, just not usable without adding `pillow-heif`).
-- No per-domain download rate limiting — a single slow or rate-limiting host could be
-  hit by many concurrent requests if many results happen to share a domain.
+- Downloads are serial per original hostname with bounded backoff and request spacing;
+  different hosts may run concurrently. Redirect destinations are not independently
+  scheduled. Explicit denials are recorded without automatic repeated retries.
 - **With the default no-op VLM and no screening policy, there is no automated
   human-presence observation.** Optional dedicated detectors require explicit
   configuration; they do not prove absence and do not validate legacy exports.

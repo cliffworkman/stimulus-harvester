@@ -721,6 +721,87 @@ def test_coverage_report_presented_without_raw_database_concepts(qtbot, window, 
     assert "Provider/query failures" in window.discover.query_preview.toPlainText()
 
 
+def test_gui_download_recovery_uses_service_and_preserves_no_default(qtbot, window, project):
+    import httpx
+    import respx
+    from stimulus_harvester.models import SearchResult
+    from stimulus_harvester.review.db import init_db, upsert_image_from_search
+    from PIL import Image
+    import io
+
+    url = 'https://images.example.org/recovery.png'
+    conn = init_db(project.paths.db_path)
+    upsert_image_from_search(conn, SearchResult(local_id='recovery', source_backend='openverse',
+        search_query='q', seed_query='q', image_url=url, landing_page_url=url), project.root.name)
+    conn.close()
+    open_window(qtbot, window, project)
+    assert '1 pending (not attempted)' in window.discover.acquisition_summary.text()
+    assert not window.discover.retry_button.isEnabled()
+    with respx.mock:
+        route = respx.get(url).mock(return_value=httpx.Response(403, text='Forbidden'))
+        window.discover.download_pending()
+        settle(qtbot, window)
+        assert '1 failed downloads' in window.discover.acquisition_summary.text()
+        assert '0 pending' in window.discover.acquisition_summary.text()
+        assert window.discover.retry_button.isEnabled()
+        assert not window.details_toggle.isChecked()
+        assert 'Retry failed downloads' in window.operation.text()
+        out = io.BytesIO()
+        Image.new('RGB', (40,30), 'navy').save(out, format='PNG')
+        route.mock(return_value=httpx.Response(200, content=out.getvalue(), headers={'Content-Type':'image/png'}))
+        window.discover.retry_failed()
+        settle(qtbot, window)
+        assert '1 unique image files available now' in window.discover.acquisition_summary.text()
+        assert '0 failed downloads' in window.discover.acquisition_summary.text()
+        assert not window.discover.retry_button.isEnabled()
+        assert route.call_count == 2
+    conn = init_db(project.paths.db_path)
+    assert [r[0] for r in conn.execute('SELECT status FROM acquisitions ORDER BY rowid')] == ['failed','success']
+    conn.close()
+    assert project.config.screening.detectors == []
+    assert window.screen.model.currentData() is None and window.screen.low.text() == ''
+
+
+def test_openverse_exhaustion_is_readable_without_opening_raw_details(qtbot, window, project):
+    open_window(qtbot, window, project)
+    result = {'pages_committed':12, 'source_occurrences':240, 'issues':[],
+              'completions':[{'provider':'openverse','query':'prison cell',
+                              'message':'Search limit reached for anonymous Openverse access'}]}
+    window.completed(Reply('search','succeeded',result))
+    assert 'Search limit reached' in window.discover.query_preview.toPlainText()
+    assert '240' in window.discover.query_preview.toPlainText()
+    assert not window.details_toggle.isChecked()
+    assert window.discover.views.currentIndex() == 2
+
+
+def test_download_contact_save_preserves_pending_queries_and_screen(qtbot, window, project, monkeypatch):
+    from stimulus_harvester.models import SearchResult
+    from stimulus_harvester.review.db import init_db, upsert_image_from_search
+    conn=init_db(project.paths.db_path)
+    upsert_image_from_search(conn,SearchResult(local_id='commons',source_backend='commons',
+        search_query='old',seed_query='old',image_url='https://images.org/a.png',landing_page_url='https://images.org/a'),project.root.name)
+    conn.close()
+    open_window(qtbot,window,project)
+    window.discover.seeds.setPlainText('unsaved church\n研究')
+    window.discover.contact.setText('https://example.org/contact')
+    calls=[]
+    monkeypatch.setattr(window,'configure_then',lambda action,configuration:calls.append((action,configuration)))
+    window.discover.retry_failed()
+    assert calls[0][0]=='retry-downloads'
+    assert calls[0][1]['search']['seed_queries']==['unsaved church','研究']
+    assert calls[0][1]['search']['commons']['contact']=='https://example.org/contact'
+    assert calls[0][1]['screening']['detectors']==[]
+    assert window.discover.seeds.toPlainText()=='unsaved church\n研究'
+
+
+def test_acquisition_actions_do_not_run_during_provider_setup(window, monkeypatch):
+    window.discover.provider_setup_dialog=object()
+    monkeypatch.setattr(window.discover,'submit',lambda *a,**k:pytest.fail('No download during unresolved setup'))
+    window.discover.download_pending()
+    window.discover.retry_failed()
+    window.discover.provider_setup_dialog=None
+
+
 def test_browser_and_native_share_review_transition(project, monkeypatch):
     from fastapi.testclient import TestClient
 

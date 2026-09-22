@@ -76,13 +76,13 @@ class SearchConfig(BaseModel):
 class DownloadConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    concurrency: int = 8
-    timeout_seconds: float = 20.0
-    max_retries: int = 2
-    retry_backoff_seconds: float = 2.0
-    user_agent: str = (
-        "stimulus-harvester/0.1 (academic research; contact: set REVIEWER_EMAIL in .env)"
-    )
+    concurrency: int = Field(8, ge=1, le=64)
+    timeout_seconds: float = Field(20.0, gt=0, le=300)
+    max_retries: int = Field(2, ge=0, le=5)
+    retry_backoff_seconds: float = Field(2.0, ge=0, le=60)
+    max_backoff_seconds: float = Field(30.0, ge=0, le=60)
+    request_delay_seconds: float = Field(1.0, ge=0, le=60)
+    user_agent: str = "StimulusHarvester/0.2 (research image acquisition)"
     max_file_size_bytes: int = 25_000_000
 
 

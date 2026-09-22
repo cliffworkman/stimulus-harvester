@@ -44,13 +44,21 @@ def _run(project, stage: str, **options):
     except (ValueError, OSError, RuntimeError) as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo(f"operation-id: {result.operation_id}")
+    acquisition = stage in {"download", "retry-downloads"}
+    if stage == "search" and isinstance(result.result, dict):
+        from stimulus_harvester.search.presentation import discovery_text
+        click.echo(discovery_text(result.result, result.status))
+    if acquisition:
+        from stimulus_harvester.download.state import format_acquisition_summary
+        click.echo(format_acquisition_summary(services.acquisition_summary(project)))
     if result.status == "partial":
         click.echo(
-            "Operation completed partially; inspect discovery-report or screening-report for retained evidence.",
+            "Some downloads failed. Use retry-downloads without repeating discovery." if acquisition else "Operation completed partially; inspect discovery-report or screening-report for retained evidence.",
             err=True,
         )
     elif result.status != "succeeded":
-        raise click.ClickException(f"{stage}: {result.status}: {result.error}")
+        message = result.error.get("message", "Operation failed") if (acquisition or stage == "search") and result.error else result.error
+        raise click.ClickException(f"{stage}: {result.status}: {message}")
     return result.result
 
 
@@ -201,6 +209,30 @@ def download_cmd(project_path, run_id, concurrency):
         _project(project_path, run_id), "download", concurrency_override=concurrency
     )
     click.echo(f"Downloaded: {success} succeeded, {failed} failed.")
+
+
+@cli.command("retry-downloads")
+@project_options
+@click.option("--provider", default=None, help="Exact source provider; intersects other scopes.")
+@click.option("--query", default=None, help="Exact source query; must match the same source as provider.")
+@click.option("--candidate-id", "candidate_ids", multiple=True, help="Repeat to select failed result IDs.")
+@click.option("--concurrency", type=click.IntRange(1, 64), default=None)
+def retry_downloads_cmd(project_path, run_id, provider, query, candidate_ids, concurrency):
+    """Retry failed acquisitions only; preserve history and skip successful downloads."""
+    success, failed = _run(_project(project_path, run_id), "retry-downloads",
+                           provider=provider, query=query, candidate_ids=list(candidate_ids) or None,
+                           concurrency_override=concurrency)
+    click.echo(f"Retried: {success} succeeded, {failed} failed.")
+
+
+@cli.command("acquisition-report")
+@project_options
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable count definitions and provider rows.")
+def acquisition_report_cmd(project_path, run_id, as_json):
+    """Show found results, available unique files, failures and pending work."""
+    from stimulus_harvester.download.state import format_acquisition_summary
+    value = services.acquisition_summary(_project(project_path, run_id))
+    click.echo(json.dumps(value, indent=2) if as_json else format_acquisition_summary(value))
 
 
 @cli.command("filter")

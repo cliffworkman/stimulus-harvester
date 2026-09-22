@@ -185,7 +185,7 @@ def candidate_evidence(conn: sqlite3.Connection, local_id: str) -> dict:
     candidate["acquisitions"] = [
         dict(r)
         for r in conn.execute(
-            "SELECT * FROM acquisitions WHERE candidate_id=? ORDER BY acquisition_id",
+            "SELECT * FROM acquisitions WHERE candidate_id=? ORDER BY rowid",
             (candidate_id,),
         )
     ]

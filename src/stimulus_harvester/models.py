@@ -83,6 +83,12 @@ class DownloadRecord(BaseModel):
     content_type: str | None = None
     error_message: str | None = None
     attempt_count: int = 1
+    # Additive JSON evidence; old records remain valid and are never rewritten.
+    providers: list[str] = Field(default_factory=list)
+    source_ids: list[str] = Field(default_factory=list)
+    request_user_agent: str | None = None
+    attempts: list[dict] = Field(default_factory=list)
+    retry_not_before: str | None = None
     downloaded_at: datetime = Field(default_factory=utcnow)
 
 

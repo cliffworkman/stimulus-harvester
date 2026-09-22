@@ -104,6 +104,7 @@ def create_project(path: Path, config: HarvesterConfig) -> Project:
 
 
 def project_status(project: Project) -> dict:
+    from stimulus_harvester.download.state import acquisition_summary
     conn = init_db(project.paths.db_path)
     try:
         counts = {
@@ -135,6 +136,7 @@ def project_status(project: Project) -> dict:
             "project_path": str(project.root),
             "identity_scope": "harvester-local/provisional",
             "counts": counts,
+            "acquisition": acquisition_summary(conn),
             "reviews": reviews,
             "missing_assets": unresolved,
             "migration_notes": [

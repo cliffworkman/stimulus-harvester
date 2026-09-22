@@ -94,10 +94,10 @@ def _invoke(project: Project, stage: str, options: dict):
             project_root=project.root,
             detailed=True,
         )[1]
-    if stage == "download":
+    if stage in {"download", "retry-downloads"}:
         from stimulus_harvester.download import run_download_stage
 
-        return run_download_stage(project.root, **options)
+        return run_download_stage(project.root, retry_failed=stage == "retry-downloads", **options)
     if stage == "filter":
         from stimulus_harvester.filter import run_filter_stage
 
@@ -129,6 +129,7 @@ def run_stage(
     if stage not in {
         "search",
         "download",
+        "retry-downloads",
         "filter",
         "score",
         "export",
@@ -192,18 +193,18 @@ def run_stage(
                 if progress:
                     progress({"operation_id": operation_id, "stage": stage, "status": "started"})
                 result = _invoke(project, stage, options)
-                status = (
-                    result["discovery_status"]
-                    if stage == "search"
-                    else result.get("stage_status", "succeeded")
-                    if stage == "screen"
-                    else "succeeded"
-                )
+                status = "succeeded"
+                if stage == "search":
+                    status = result["discovery_status"]
+                elif stage == "screen":
+                    status = result.get("stage_status", "succeeded")
+                elif stage in {"download", "retry-downloads"} and result[1]:
+                    status = "partial" if result[0] else "failed"
                 error = None
                 if status == "failed":
                     error = {
-                        "type": "DiscoveryFailure",
-                        "message": "Discovery failed; inspect discovery-report for persisted request and setup diagnostics",
+                        "type": "AcquisitionFailure" if stage in {"download", "retry-downloads"} else "DiscoveryFailure",
+                        "message": "Images could not be downloaded. Retry failed downloads without repeating the search; server waits and denials are retained in acquisition evidence." if stage in {"download", "retry-downloads"} else "Discovery failed; inspect discovery-report for persisted request and setup diagnostics",
                     }
                 outcome = OperationResult(operation_id, stage, status, result, error)
         except (KeyboardInterrupt, SystemExit) as exc:
@@ -294,7 +295,19 @@ def discovery_diagnostics(path: Path | Project, *, operation_id=None, provider_o
         return {
             "coverage": coverage_report(conn, provider_order, operation_id),
             "events": read_attempts(conn, operation_id),
+            "acquisition": acquisition_summary(project),
         }
+    finally:
+        conn.close()
+
+
+def acquisition_summary(path: Path | Project):
+    from stimulus_harvester.download.state import acquisition_summary as summarize
+
+    project = path if isinstance(path, Project) else open_project(path)
+    conn = init_db(project.paths.db_path)
+    try:
+        return summarize(conn)
     finally:
         conn.close()
 

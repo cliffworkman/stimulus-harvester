@@ -8,18 +8,22 @@ from stimulus_harvester.models import SearchResult, make_local_id
 from stimulus_harvester.search.http import PagedAdapter, SearchPage, http_url, image_url
 
 
+def commons_user_agent(contact):
+    contact = contact or ""
+    if not (http_url(contact) or ("@" in contact and not any(c.isspace() for c in contact))):
+        raise ValueError(
+            "Commons requires search.commons.contact (operator email or project URL) for its User-Agent"
+        )
+    return f"StimulusHarvesterBot/0.2 ({contact})"
+
+
 class CommonsAdapter(PagedAdapter):
     name = "commons"
 
     def __init__(self, config, client=None):
         if not http_url(config.base_url):
             raise ValueError("Commons requires a valid HTTP(S) base_url")
-        contact = config.contact or ""
-        if not (http_url(contact) or ("@" in contact and not any(c.isspace() for c in contact))):
-            raise ValueError(
-                "Commons requires search.commons.contact (operator email or project URL) for its User-Agent"
-            )
-        config = config.model_copy(update={"user_agent": f"StimulusHarvesterBot/0.1 ({contact})"})
+        config = config.model_copy(update={"user_agent": commons_user_agent(config.contact)})
         self._init_http(config, client)
 
     def iter_pages(self, query, seed_query, *, raw_api_dir):

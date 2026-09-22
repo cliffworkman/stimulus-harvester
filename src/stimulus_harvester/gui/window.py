@@ -242,6 +242,12 @@ class Window(QMainWindow):
     def completed(self, reply):
         if reply.issue:
             self.followup = None
+            if reply.action in {"search", "download", "retry-downloads"} and reply.value is not None:
+                self.log.setPlainText(reply.issue.details)
+                self.discover.report(reply.action, reply.value, reply.status)
+                self.notice("Search needs attention; see the provider explanation." if reply.action == "search"
+                            else "Downloads failed. Use Retry failed downloads without repeating the search; see the counts above.")
+                return
             self.notice(f"{reply.issue.category}: {reply.issue.message}\n{reply.issue.guidance}")
             self.log.setPlainText(reply.issue.details)
             self.details_toggle.setChecked(True)
@@ -257,7 +263,8 @@ class Window(QMainWindow):
             self.notice("Cancelled before the stage started. No running operation was hidden.")
             return
         self.notice(
-            f"{reply.action}: {'Partial discovery — inspect provider/query failures' if reply.status == 'partial' else 'completed'}"
+            f"{reply.action}: " + ("Some downloads failed — use Retry failed downloads" if reply.status == "partial" and reply.action in {"download", "retry-downloads"}
+                                    else "Partial discovery — inspect provider/query failures" if reply.status == "partial" else "completed")
         )
         if reply.action == "dependencies":
             self.dependencies = reply.value
@@ -304,9 +311,10 @@ class Window(QMainWindow):
             self.inspect_artifact(target, result["artifact_id"])
         if reply.action not in {"inspect", "artifact"}:
             show_json(self.log, reply.value)
-        if reply.action in {"preview_queries", "diagnostics", "search"}:
+        if reply.action in {"preview_queries", "diagnostics", "search", "download", "retry-downloads"}:
             self.discover.report(reply.action, reply.value, reply.status)
-            self.details_toggle.setChecked(True)
+            if reply.action in {"preview_queries", "diagnostics"}:
+                self.details_toggle.setChecked(True)
 
     def show_about(self):
         from stimulus_harvester import __version__

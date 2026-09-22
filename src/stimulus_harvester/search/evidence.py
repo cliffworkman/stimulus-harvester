@@ -111,6 +111,7 @@ def discovery_summary(conn, operation_id):
         "failed_attempts": len(failures),
         "unresolved_failures": len(unresolved),
         "issues": issues,
+        "completions": [r for r in records if r["status"] in {"query_exhausted", "query_completed"}],
         "events": len(records),
     }
 

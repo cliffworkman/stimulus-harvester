@@ -85,6 +85,10 @@ class PagedAdapter(SearchAdapter):
     def iter_pages(self, query, seed_query, *, raw_api_dir):
         raise NotImplementedError
 
+    def exhaustion_response(self, status, body):
+        """Provider-specific, evidence-supported limit; never assume a 401 is exhaustion."""
+        return None
+
     def emit(self, status, **details):
         event = dict(
             self._context,
@@ -186,6 +190,11 @@ class PagedAdapter(SearchAdapter):
                     encoding="utf-8",
                 )
                 if error is None and response.status_code != 200:
+                    exhaustion = self.exhaustion_response(response.status_code, bytes(body))
+                    if exhaustion is not None:
+                        self.unavailable = False
+                        self.emit("query_exhausted", **exhaustion)
+                        return None
                     kind = "rate_limited" if response.status_code == 429 else "http_error"
                     message = f"HTTP {response.status_code}"
                     if self.name == "searxng" and response.status_code == 403:
