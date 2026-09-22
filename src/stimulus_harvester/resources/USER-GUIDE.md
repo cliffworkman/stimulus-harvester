@@ -14,7 +14,7 @@ received SHA256SUMS before deciding whether to trust it. A checksum alone does n
 authenticate its publisher. Do not bypass organizational security restrictions.
 
 Keep the application folder intact. Put research projects in a separate writable
-folder, such as Documents. Paths with spaces and `ç ”ç©¶` are supported. Prefer a local
+folder, such as Documents. Paths with spaces and `研究` are supported. Prefer a local
 working copy and sync/backup only when operations are idle; never have two programs
 writing to the same project at once.
 
