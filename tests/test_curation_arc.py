@@ -321,9 +321,52 @@ def test_review_shortcuts_do_not_apply_from_freeze_mode(qtbot, window, demo):
     page.browser.select_visible(page.browser.visible_ids[0])
     settle(qtbot, window)
     before = inventory(demo.root)
-    page.reviewer.setText('fixture')
+    page.reviewer.setText("fixture")
     page.modes.setCurrentIndex(1)
     page.notes.setFocus()
     qtbot.keyClick(page.notes, Qt.Key.Key_R, Qt.KeyboardModifier.AltModifier)
     settle(qtbot, window)
     assert inventory(demo.root) == before
+
+
+def test_header_sort_and_grid_sort_control_remain_synchronized(qtbot):
+    b = CandidateBrowser(triage=True)
+    qtbot.addWidget(b)
+    b.populate(large_rows(10))
+    b.select_visible("c0003")
+    b.table.sortByColumn(6, Qt.SortOrder.DescendingOrder)
+    assert b.order.currentText() == "Width ↓"
+    assert b.visible_ids[0] == "c0009" and b.candidate_id() == "c0003"
+    b.order.setCurrentIndex(b.order.findData(16))
+    assert b.visible_ids[0] == "c0000" and b.candidate_id() == "c0003"
+
+
+def test_screening_observations_and_effective_dispositions_filter_separately(qtbot):
+    b = CandidateBrowser()
+    qtbot.addWidget(b)
+    rows = large_rows(3)
+    rows[0]["screening"] = dict(effective_disposition="excluded")
+    rows[1]["screening"] = dict(effective_disposition="eligible")
+    b.populate(rows)
+    b.selectors["disposition"].setCurrentIndex(
+        b.selectors["disposition"].findData("Excluded by screening")
+    )
+    assert b.visible_ids == ["c0000"]
+    assert "Excluded by screening" in b.counts.text()
+    assert (
+        rows[0]["screening_text"] == "Not run"
+    )  # No observation is invented from a rule/override result.
+    b.clear_filters()
+    assert len(b.visible_ids) == 3
+
+
+def test_space_marks_but_does_not_review_or_change_current_candidate(qtbot):
+    b = CandidateBrowser(triage=True)
+    qtbot.addWidget(b)
+    b.populate(large_rows(2))
+    b.show()
+    b.grid.setCurrentRow(0)
+    b.grid.setFocus()
+    qtbot.keyClick(b.grid, Qt.Key.Key_Space)
+    assert b.candidate_id() == "c0000" and b.marked_ids == {"c0000"}
+    assert all(r["review_text"] == "Unreviewed" for r in b.rows.values())

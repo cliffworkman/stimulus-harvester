@@ -76,6 +76,14 @@ def scroll_panel(widget):
     return scroll
 
 
+def disposition_text(row):
+    return {
+        "review_required": "Needs human review",
+        "eligible": "Eligible under screening rules",
+        "excluded": "Excluded by screening",
+    }.get((row.get("screening") or {}).get("effective_disposition"), "Not evaluated")
+
+
 class ImageOverlay(QWidget):
     def __init__(self):
         super().__init__()
@@ -354,6 +362,7 @@ class CandidateBrowser(QWidget):
         super().__init__()
         self.setMinimumWidth(200)
         self.rows = {}
+        self.populating = False
         self.root = None
         self.marked_ids = set()
         self.visible_ids = []
@@ -390,6 +399,7 @@ class CandidateBrowser(QWidget):
                 ("license", "Exact license claim"),
                 ("failure", "Failure reason"),
                 ("shared", "Exact-byte histories"),
+                ("disposition", "Effective screening disposition"),
             )
         ):
             combo = QComboBox()
@@ -439,15 +449,24 @@ class CandidateBrowser(QWidget):
         self.view.setAccessibleName("Image browsing view")
         controls.addWidget(self.view)
         self.order = QComboBox()
-        for label, column in (
-            ("First discovered", 8),
-            ("Title", 0),
-            ("Width", 6),
-            ("Height", 7),
-            ("Human review", 1),
+        for column, ascending, descending in (
+            (8, "First discovered", "Last discovered"),
+            (0, "Title A–Z", "Title Z–A"),
+            (6, "Width ↑", "Width ↓"),
+            (7, "Height ↑", "Height ↓"),
+            (1, "Review A–Z", "Review Z–A"),
+            (2, "Screening A–Z", "Screening Z–A"),
+            (3, "Source A–Z", "Source Z–A"),
+            (4, "License A–Z", "License Z–A"),
+            (5, "Availability A–Z", "Availability Z–A"),
         ):
-            self.order.addItem(label, column)
-        self.order.setAccessibleName("Sort image view, ascending")
+            self.order.addItem(ascending, column * 2)
+            self.order.addItem(descending, column * 2 + 1)
+        self.order.setAccessibleName("Sort image view and direction")
+        self.order.setMinimumContentsLength(9)
+        self.order.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
         controls.addWidget(self.order)
         self.previous = button(controls, "‹", lambda: self.move(-1))
         self.previous.setAccessibleName("Previous image in filtered order (Alt+Left)")
@@ -477,7 +496,9 @@ class CandidateBrowser(QWidget):
         self.table.sortByColumn(8, Qt.SortOrder.AscendingOrder)
         self.table.setColumnHidden(8, True)
         self.order.currentIndexChanged.connect(
-            lambda: self.table.sortByColumn(self.order.currentData(), Qt.SortOrder.AscendingOrder)
+            lambda: self.table.sortByColumn(
+                self.order.currentData() // 2, Qt.SortOrder(self.order.currentData() % 2)
+            )
         )
         self.table.setMinimumHeight(100)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
@@ -505,7 +526,8 @@ class CandidateBrowser(QWidget):
         self.table.itemSelectionChanged.connect(self.selected)
         self.filter.textChanged.connect(self.filter_rows)
         self.availability.currentIndexChanged.connect(self.filter_rows)
-        self.table.horizontalHeader().sortIndicatorChanged.connect(self.filter_rows)
+        self.table.horizontalHeader().sortIndicatorChanged.connect(self.sort_changed)
+        self.table.model().layoutChanged.connect(self.filter_rows)
         from PySide6.QtGui import QKeySequence, QShortcut
 
         for key, step in (("Alt+Left", -1), ("Alt+Right", 1)):
@@ -514,6 +536,11 @@ class CandidateBrowser(QWidget):
             shortcut.activated.connect(lambda step=step: self.move(step))
         if triage:
             self.view.setCurrentIndex(1)
+
+    def sort_changed(self, column, order):
+        self.order.blockSignals(True)
+        self.order.setCurrentIndex(self.order.findData(column * 2 + order.value))
+        self.order.blockSignals(False)
 
     def change_view(self, index):
         self.stack.setCurrentIndex(index)
@@ -585,6 +612,7 @@ class CandidateBrowser(QWidget):
         self.min_height.setValue(0)
 
     def populate(self, candidates, root=None):
+        self.populating = True
         prior = self.candidate_id()
         if root != self.root:
             self.marked_ids.clear()
@@ -599,6 +627,7 @@ class CandidateBrowser(QWidget):
                     values[key].add(source.get(key) or "Not supplied")
             values["review"].add(c.get("review_text", "Unreviewed"))
             values["screening"].add(c.get("screening_text", "Not run"))
+            values["disposition"].add(disposition_text(c))
             if c.get("failure_kind"):
                 values["failure"].add(c["failure_kind"])
             values["shared"].add(
@@ -655,6 +684,7 @@ class CandidateBrowser(QWidget):
                 if self.table.item(i, 0).data(Qt.ItemDataRole.UserRole) == prior:
                     self.table.selectRow(i)
         self.table.blockSignals(False)
+        self.populating = False
         self.filter_rows()
 
     def candidate_id(self):
@@ -701,6 +731,8 @@ class CandidateBrowser(QWidget):
                 return
 
     def filter_rows(self, *args):
+        if self.populating:
+            return
         term = self.filter.text().casefold()
         facets = {k: v.currentData() for k, v in self.selectors.items()}
         visible = 0
@@ -756,6 +788,9 @@ class CandidateBrowser(QWidget):
                 else "Single history or no acquired asset"
             )
             match = match and (not facets["shared"] or facets["shared"] == shared)
+            match = match and (
+                not facets["disposition"] or facets["disposition"] == disposition_text(c)
+            )
             self.table.setRowHidden(i, not match)
             visible += bool(match)
             if match:
@@ -768,9 +803,6 @@ class CandidateBrowser(QWidget):
             + bool(self.min_width.value())
             + bool(self.min_height.value())
         )
-        self.counts.setText(
-            f"{visible:,} visible / {len(self.rows):,} total · {active} extra filters\nView filters do not change review or freeze membership."
-        )
         self.filters_toggle.setText(f"More filters ({active})" if active else "More filters")
         labels = [v.currentText() for v in self.selectors.values() if v.currentData()]
         if term:
@@ -780,12 +812,14 @@ class CandidateBrowser(QWidget):
                 f"Minimum {self.min_width.value()} × {self.min_height.value()} px (unknown excluded)"
             )
         self.counts.setText(
-            f"{visible:,} visible / {len(self.rows):,} total · {self.availability.currentText()}\n"
-            + (" · ".join(labels) if labels else "No additional filters")
+            f"{visible:,} visible / {len(self.rows):,} total · "
+            + (" · ".join(labels) if labels else self.availability.currentText())
         )
         self.counts.setToolTip(
             self.counts.text() + "\nView filters never change review or freeze membership."
         )
+        self.filters_toggle.setToolTip("\n".join(labels) if labels else "No additional filters")
+        self.filters_toggle.setAccessibleDescription(self.filters_toggle.toolTip())
         self.marked_ids.intersection_update(self.visible_ids)
         self.marks_changed.emit()
         cid = self.candidate_id()

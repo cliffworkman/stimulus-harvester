@@ -15,6 +15,7 @@ This arc addresses the curation portions of #10, #8 and #22, with intersections 
 - Maybe means further inspection under the existing review contract. It is not acceptance. Batch Accept is intentionally absent. Each batch uses one database transaction and appends normal per-candidate review events. A changed candidate asset or review label rejects the entire stale request. Storage errors roll back all its review changes. Later explicit decisions supersede records without deleting history.
 - Individual decisions can optionally advance to the next candidate in the prior filtered order. Advance is initially off. Viewing, selecting and navigating have no decision side effects.
 - Inspector screening evidence uses a candidate-scoped query through the same reporting logic as the full report; scientific aggregation rules are unchanged.
+- The sort selector and table headers stay synchronized, including ascending/descending direction. Saved observation status and effective screening disposition have separate facets. Active filter values appear in the count line and full tooltip; zero-match filters survive a refresh until explicitly cleared.
 
 ## Scientific and compatibility boundaries
 
