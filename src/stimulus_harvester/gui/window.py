@@ -50,12 +50,18 @@ class Window(QMainWindow):
         self.warning.setMaximumHeight(30)
         box.addWidget(self.context)
         box.addWidget(self.warning)
+        from .collections import CollectionBar
+
+        self.collections = CollectionBar(self)
+        box.addWidget(self.collections)
         self.tabs = QTabWidget()
         box.addWidget(self.tabs, 1)
         self.project = ProjectPage(self)
         self.discover = DiscoverPage(self)
         self.screen = ScreenPage(self)
         self.review = ReviewPage(self)
+        self.collections.actor.textChanged.connect(self.review.reviewer.setText)
+        self.review.reviewer.textChanged.connect(self.collections.actor.setText)
         self.assemble = ArtifactPage(self)
         self.export = ArtifactPage(self, exporting=True)
         self.pages = [
@@ -140,6 +146,50 @@ class Window(QMainWindow):
         if action not in {"create", "open", "demo", "dependencies"} and not self.session.state:
             self.notice("Open or create a project first.")
             return False
+        payload = dict(payload or {})
+        cid = self.collections.collection_id
+        if action in {"create", "open", "demo"}:
+            cid = None
+        if cid and action != "dependencies":
+            payload["view_collection_id"] = cid
+            if action in {"search", "screen", "screen-policy"}:
+                payload["collection_id"] = cid
+                if action != "screen":
+                    payload["actor"] = self.review.reviewer.text()
+                if action == "search":
+                    payload["expected_revision"] = self.session.state.status["collection"][
+                        "event_id"
+                    ]
+            if action in {"download", "retry-downloads"}:
+                payload["collection_id"] = cid
+            if action in {"review", "review-batch"}:
+                if action == "review":
+                    r = self.review.inspector.current["evidence"]["review"]
+                    selection = [
+                        {
+                            "candidate_id": r["scope"]["candidate_id"],
+                            "scope": r["scope"],
+                            "event_id": r["event_id"],
+                        }
+                    ]
+                else:
+                    selection = payload["selection"]
+                payload = {
+                    "view_collection_id": cid,
+                    "action": "review",
+                    "collection_id": cid,
+                    "actor": payload["reviewer_email"],
+                    "label": payload["label"],
+                    "notes": payload.get("notes"),
+                    "selection": selection,
+                    "batch": action == "review-batch",
+                }
+                action = "collection"
+            elif action == "screen-override":
+                payload["action"] = "override"
+                payload["collection_id"] = cid
+                payload["actor"] = payload.pop("reviewer")
+                action = "collection"
         self.active_action = action
         self.operation.setText(
             f"Queued: {action}. Cancellation is available only before the backend starts."
@@ -236,8 +286,15 @@ class Window(QMainWindow):
                 page.manifest.clear()
             self.review.notes.clear()
         self.displayed_project = state.project_id
+        self.collections.populate(state)
         full_context = state.name + "\n" + summary_text(state.status["curation"]["summary"])
         self.context.setText("\n".join(full_context.splitlines()[:2]))
+        if state.collection_id:
+            self.context.setText(
+                state.status["collection"]["name"]
+                + " · collection review\n"
+                + summary_text(state.status["curation"]["summary"]).splitlines()[0]
+            )
         self.context.setToolTip(full_context)
         self.warning.setText(
             "\n".join(state.warnings)
@@ -249,6 +306,7 @@ class Window(QMainWindow):
 
     @Slot(bool)
     def busy_changed(self, busy):
+        self.collections.setEnabled(not busy and self.session.state is not None)
         viewing = busy and self.active_action == "inspect"
         for i, page in enumerate(self.pages):
             page.setEnabled((not busy or viewing) and (i == 0 or self.session.state is not None))
@@ -342,8 +400,8 @@ class Window(QMainWindow):
         elif reply.action == "artifact":
             if self.artifact_target:
                 self.artifact_target.display(reply.value)
-        elif reply.action in {"review", "review-batch", "screen-override"}:
-            if reply.action == "review-batch":
+        elif reply.action in {"review", "review-batch", "screen-override", "collection"}:
+            if reply.action in {"review-batch", "collection"}:
                 self.review.browser.clear_marks()
             next_id, self.review.next_after_review = self.review.next_after_review, None
             if reply.action == "review" and next_id in self.review.browser.visible_ids:
@@ -370,6 +428,8 @@ class Window(QMainWindow):
             self.inspect_artifact(target, result["artifact_id"])
         if reply.action not in {"inspect", "artifact"}:
             show_json(self.log, reply.value)
+        if reply.action == "collection-inspect":
+            self.details_toggle.setChecked(True)
         if reply.action in {
             "preview_queries",
             "diagnostics",

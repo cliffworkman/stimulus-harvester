@@ -38,6 +38,7 @@ from stimulus_harvester.curation import (
     screening_label,
     title_for,
 )
+
 from .thumbnails import ThumbnailGrid
 
 
@@ -294,6 +295,28 @@ class Inspector(QWidget):
         self.sources.addTopLevelItem(group)
         group.setExpanded(True)
         self.history.setPlainText(review_history_text(review, evidence["review_events"]))
+        memberships = evidence.get("collections", [])
+        if memberships:
+            group = QTreeWidgetItem(["Collections", "Independent human review in each collection"])
+            for membership in memberships:
+                group.addChild(
+                    QTreeWidgetItem(
+                        [
+                            membership["name"] + (" (archived)" if membership["archived"] else ""),
+                            membership["review"]["label"],
+                        ]
+                    )
+                )
+            self.sources.addTopLevelItem(group)
+            group.setExpanded(True)
+        if evidence.get("collection_id"):
+            legacy = evidence["project_review"].get("label", "unrated")
+            self.history.setPlainText(
+                "Review scope: selected collection\nPreviously reviewed at project scope: "
+                + legacy
+                + " (context only)\n\n"
+                + self.history.toPlainText()
+            )
         candidates = evidence["screening"]["candidates"]
         if candidates:
             result = candidates[0]

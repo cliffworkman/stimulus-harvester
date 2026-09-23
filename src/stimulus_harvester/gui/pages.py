@@ -399,6 +399,8 @@ class DiscoverPage(Page):
         search["seed_queries"] = [
             s.strip() for s in self.seeds.toPlainText().splitlines() if s.strip()
         ]
+        if self.window.collections.collection_id:
+            search["seed_queries"] = self.config["search"]["seed_queries"]
         for key, check in self.providers.items():
             search[key]["enabled"] = check.isChecked()
             pages, count = self.limits[key]
@@ -429,6 +431,8 @@ class DiscoverPage(Page):
             failure_text(human["summary"]) + "\n\n" + coverage_text(human["coverage"])
         )
         self.download_button.setEnabled(counts["pending"] > counts["pending_deferred"])
+        if state.collection_id:
+            self.download_button.setEnabled(human["summary"]["pending"] > 0)
         self.retry_button.setEnabled(bool(human["summary"]["retry_ids"]))
         self.provider_status.setText(
             " · ".join(
@@ -457,6 +461,16 @@ class DiscoverPage(Page):
             self.query_limit.setValue(expansion["max_expanded_queries"])
             self.synonyms.setText("; ".join(", ".join(g) for g in expansion["synonym_groups"]))
             self.templates.setText("; ".join(expansion["phrase_templates"]))
+        self.seeds.setReadOnly(bool(state.collection_id))
+        if state.collection_id:
+            self.seeds.setPlainText(
+                "\n".join(p["text"] for p in state.status["collection"]["phrases"])
+            )
+            self.seeds.setToolTip(
+                "Edit this collection's phrases using Collections → Edit name / phrases."
+            )
+        elif state.config:
+            self.seeds.setPlainText("\n".join(state.config["search"]["seed_queries"]))
 
     def report(self, action, value, status="succeeded"):
         if action == "preview_queries":
@@ -563,6 +577,7 @@ class ScreenPage(Page):
         row = QHBoxLayout()
         button(row, "Save explicit policy", self.save_policy)
         button(row, "Disable configured screening", self.disable_screening)
+        button(row, "Evaluate saved observations", self.evaluate_saved)
         self.run_button = button(row, "Run configured screening", self.run_screening)
         form.addRow(row)
         setup_box.addWidget(group)
@@ -591,6 +606,23 @@ class ScreenPage(Page):
             "recorded with observations. Detector scores do not establish human absence.",
         ):
             self.submit("screen")
+
+    def evaluate_saved(self):
+        cid = self.window.collections.collection_id
+        if not cid:
+            self.window.notice(
+                "Select a collection to evaluate its policy against saved observations."
+            )
+            return
+        self.window.submit(
+            "collection",
+            {
+                "action": "policy",
+                "collection_id": cid,
+                "actor": self.window.review.reviewer.text(),
+                "configuration": (self.config or {}).get("screening", {}),
+            },
+        )
 
     def save_policy(self):
         model = self.model.currentData()
@@ -640,6 +672,21 @@ class ScreenPage(Page):
         )
 
     def disable_screening(self):
+        if self.window.collections.collection_id:
+            if self.window.confirm(
+                "Clear collection screening policy?",
+                "Activate an empty policy for this collection. Observations and historical decisions remain preserved.",
+            ):
+                self.window.submit(
+                    "collection",
+                    {
+                        "action": "policy",
+                        "collection_id": self.window.collections.collection_id,
+                        "actor": self.window.review.reviewer.text(),
+                        "configuration": {},
+                    },
+                )
+            return
         if self.config and self.window.confirm(
             "Disable configured screening?",
             "Save and activate an empty screening policy without inference. Existing observations are preserved; effective dispositions are recomputed from the empty policy. No detector default will be inserted.",
@@ -651,15 +698,18 @@ class ScreenPage(Page):
     def populate(self, state):
         self.browser.populate(state.candidates, state.path)
         report = state.screening
+        config = copy.deepcopy(state.config)
+        if state.collection_id and config is not None:
+            config["screening"] = report["policy"]["config"] if report["policy"] else {}
         show_json(
             self.rule_details,
             {
                 "active_evidence_policy": report["policy"],
-                "configured_policy": (state.config or {}).get("screening"),
+                "configured_policy": (config or {}).get("screening"),
             },
         )
-        self.config = state.config
-        detectors = (state.config or {}).get("screening", {}).get("detectors", [])
+        self.config = config
+        detectors = (config or {}).get("screening", {}).get("detectors", [])
         self.configured.setText(
             (
                 "Configured: "
@@ -807,6 +857,12 @@ class FreezePanel(QWidget):
             scope["candidate_ids"] = [
                 i.data(Qt.ItemDataRole.UserRole) for i in self.selected.selectedItems()
             ]
+        if self.window.collections.collection_id:
+            scope = {
+                "mode": "collection",
+                "collection_id": self.window.collections.collection_id,
+                "selection_rule": "All active members of the explicitly selected collection",
+            }
         return {
             "reviewer": self.reviewer.text(),
             "scope": scope,
@@ -843,7 +899,7 @@ class FreezePanel(QWidget):
         self.duplicates.clear()
         self.asset.clear()
         self.asset.addItem("Choose a conflicting shared asset", None)
-        candidates = {c["candidate_id"]: c for c in self.window.session.state.candidates}
+        candidates = {c["candidate_id"]: c for c in self.window.session.state.all_candidates}
         for group in report["duplicates"]:
             resolution = group.get("resolution")
             root = QTreeWidgetItem(
@@ -928,10 +984,35 @@ class FreezePanel(QWidget):
             )
 
     def populate(self, state):
-        if self.project_id != state.project_id:
+        scope_key = (state.project_id, state.collection_id)
+        self.scope.setItemText(
+            0,
+            "All members of selected collection"
+            if state.collection_id
+            else "All current candidates",
+        )
+        if state.collection_id:
+            self.scope.setCurrentIndex(0)
+        self.scope.setEnabled(not state.collection_id)
+        self.scope_rule.setEnabled(not state.collection_id)
+        self.selected.setVisible(not state.collection_id and self.scope.currentIndex() == 1)
+        self.scope.setToolTip(
+            "All active members of the selected collection"
+            if state.collection_id
+            else "Project-scoped review"
+        )
+        if self.project_id != scope_key:
             self.resolutions.clear()
             self.resolution_summary.setText("No membership adjudications recorded.")
-            self.project_id = state.project_id
+            self.project_id = scope_key
+            self.summary.setText(
+                (
+                    f"Collection: {state.status['collection']['name']} · {len(state.candidates)} members. "
+                    if state.collection_id
+                    else "Project review scope. "
+                )
+                + "Validate to inspect review, screening and duplicate blockers."
+            )
         selected = {i.data(Qt.ItemDataRole.UserRole) for i in self.selected.selectedItems()}
         self.selected.blockSignals(True)
         self.selected.clear()
@@ -1111,7 +1192,16 @@ class ReviewPage(Page):
             return
         self.submit(
             "review-batch",
-            selection=[{k: r[k] for k in ("candidate_id", "asset_id", "label")} for r in rows],
+            selection=[
+                {
+                    "candidate_id": r["candidate_id"],
+                    "scope": r["collection_review"]["scope"],
+                    "event_id": r["collection_review"]["event_id"],
+                }
+                if "collection_review" in r
+                else {k: r[k] for k in ("candidate_id", "asset_id", "label")}
+                for r in rows
+            ],
             label=choice.currentData(),
             notes=notes.text(),
             reviewer_email=self.reviewer.text().strip(),
@@ -1277,6 +1367,11 @@ class ArtifactPage(Page):
         self.summary.setText(
             f"Verified at inspection · {m['kind']} · {m['artifact_id']}\nCreated {m['created_at']} · {len(m['membership'])} assets · parent {m['parent_id'] or 'none'}\n{value['path']}\nLicense/source policy: {claims}"
         )
+        if m["format_version"] == 2:
+            name = m.get("collection_name") or m["collection_context"]["collection"]["name"]
+            self.summary.setText(
+                "Collection: " + name + " · independent collection reviews\n" + self.summary.text()
+            )
         show_json(self.manifest, value)
         self.members.clear()
         for member in m["membership"]:

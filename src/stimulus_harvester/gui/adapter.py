@@ -112,6 +112,8 @@ class Adapter:
     """Methods execute in workers, never Qt callbacks. No independent scientific rules."""
 
     def execute(self, action, path, payload, progress, cancelled):
+        payload = dict(payload)
+        collection_id = payload.pop("view_collection_id", None)
         if cancelled():
             return Reply(action, "cancelled", {"message": "Cancelled before start"})
         project_path = Path(path) if path else None
@@ -129,16 +131,44 @@ class Adapter:
                 value = {"path": str(project.root), "project_id": project.project_id}
             elif action in {"open", "refresh"}:
                 progress({"stage": action, "status": "started"})
+            elif action == "collection-inspect":
+                from stimulus_harvester import collections
+                from stimulus_harvester.review.db import init_db
+
+                project = services.open_project(project_path)
+                conn = init_db(project.paths.db_path)
+                try:
+                    value = collections.evidence(conn, payload["collection_id"])
+                finally:
+                    conn.close()
             elif action == "dependencies":
                 progress({"stage": action, "status": "started"})
                 return Reply(action, status, backend.dependency_states(**payload))
             elif action == "inspect":
                 progress({"stage": action, "status": "started"})
                 return Reply(
-                    action, status, backend.inspect_candidate(project_path, payload["candidate_id"])
+                    action,
+                    status,
+                    backend.inspect_candidate(project_path, payload["candidate_id"], collection_id),
                 )
             elif action == "preview_queries":
                 config = HarvesterConfig.model_validate(payload["configuration"])
+                if collection_id:
+                    from stimulus_harvester.collections import collection
+                    from stimulus_harvester.review.db import init_db
+
+                    conn = init_db(project_path / "review" / "state.db")
+                    try:
+                        phrases = collection(conn, collection_id)["phrases"]
+                    finally:
+                        conn.close()
+                    config = config.model_copy(
+                        update={
+                            "search": config.search.model_copy(
+                                update={"seed_queries": [p["text"] for p in phrases]}
+                            )
+                        }
+                    )
                 return Reply(
                     action,
                     status,
@@ -183,7 +213,7 @@ class Adapter:
                         action,
                         status,
                         value,
-                        self._refresh(project_path),
+                        self._refresh(project_path, collection_id),
                         classify(
                             str(
                                 (outcome.error or {}).get("message", "Operation failed")
@@ -192,7 +222,7 @@ class Adapter:
                             action=action,
                         ),
                     )
-            state = backend.workspace(project_path)
+            state = backend.workspace(project_path, collection_id)
             return Reply(action, status, value, state)
         except Exception as exc:
             return Reply(
@@ -204,8 +234,8 @@ class Adapter:
             )
 
     @staticmethod
-    def _refresh(path):
+    def _refresh(path, collection_id=None):
         try:
-            return backend.workspace(path)
+            return backend.workspace(path, collection_id)
         except Exception:
             return None
