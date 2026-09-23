@@ -46,9 +46,15 @@ def main():
     passed("coherent release, runtime and package versions")
     for module in ("torch","torchvision","open_clip","pip"):
         assert importlib.util.find_spec(module) is None, module
-    deps = workspace.dependency_states(probe=True)
+    # The no-ML core contract is independent of services the owner runs on this host.
+    # Reserve an unlistened loopback port so this probe cannot reach an unrelated Ollama.
+    with socket.socket() as unavailable:
+        unavailable.bind(("127.0.0.1", 0))
+        deps = workspace.dependency_states(
+            probe=True, ollama_url=f"http://127.0.0.1:{unavailable.getsockname()[1]}"
+        )
     assert not any(deps[name]["available"] for name in ("torch","person_detector","OpenCLIP","CUDA","Ollama")), deps
-    passed("core lacks ML, pip, CUDA and Ollama service", capabilities=deps)
+    passed("core lacks ML, pip and CUDA; controlled Ollama endpoint unavailable", capabilities=deps)
     resource = files("stimulus_harvester")
     for name in ("resources/harvester.ico","resources/harvester.svg","resources/USER-GUIDE.md","resources/minimal.yaml","review/templates/grid.html","review/static/style.css","review/static/review.js"):
         assert resource.joinpath(name).is_file(), name
