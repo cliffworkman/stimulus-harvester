@@ -1,4 +1,4 @@
-# Stimulus Harvester 0.2.0rc4
+# Stimulus Harvester 0.2.0rc5
 
 Research stimulus discovery & adjudication. Release candidate for evaluation;
 no production person detector has been selected.
