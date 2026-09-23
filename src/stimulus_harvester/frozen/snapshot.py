@@ -16,16 +16,20 @@ from stimulus_harvester.screening.config import StrictModel
 from stimulus_harvester.screening.detectors import file_hash
 from stimulus_harvester.screening.engine import report_from_connection
 from stimulus_harvester.storage import candidate_evidence
+
 from . import store
 
 
 class Scope(StrictModel):
-    mode: Literal["all_current", "candidates"]
+    mode: Literal["all_current", "candidates", "collection"]
+    collection_id: str | None = None
     candidate_ids: list[str] = Field(default_factory=list)
     selection_rule: str = Field(min_length=1)
 
     @model_validator(mode="after")
     def explicit_scope(self):
+        if (self.mode == "collection") != bool(self.collection_id):
+            raise ValueError("Collection scope requires exactly one stable collection ID")
         if not self.selection_rule.strip():
             raise ValueError("Scope selection rule must not be blank")
         if len(self.candidate_ids) != len(set(self.candidate_ids)):
@@ -92,9 +96,18 @@ def locate(project, asset):
 
 def snapshot(conn, project, request):
     request = FreezeRequest.model_validate(request)
+    collection_context = None
+    scoped = request.scope.mode == "collection"
+    if scoped:
+        from stimulus_harvester import collections
+
+        collections.collection(conn, request.scope.collection_id, active=True)
+        collection_context = collections.evidence(conn, request.scope.collection_id)
     all_rows = rows(conn, "SELECT * FROM candidates ORDER BY candidate_id")
     by_id = {r["candidate_id"]: r for r in all_rows}
     selected = sorted(by_id if request.scope.mode == "all_current" else request.scope.candidate_ids)
+    if scoped:
+        selected = sorted(m["candidate_id"] for m in collection_context["memberships"])
     blockers, warnings = [], []
 
     def block(code, message, **context):
@@ -106,7 +119,11 @@ def snapshot(conn, project, request):
         if cid not in by_id:
             block("unknown_candidate", "Scope ID is not a canonical candidate ID", candidate_id=cid)
     selected = [cid for cid in selected if cid in by_id]
-    screening = report_from_connection(conn, project)
+    screening = (
+        collections.screening_report(conn, project, request.scope.collection_id)
+        if scoped
+        else report_from_connection(conn, project)
+    )
     screen_by_id = {r["candidate_id"]: r for r in screening["candidates"]}
     scoped_assets = {by_id[c]["asset_id"] for c in selected} - {None}
     related_ids = sorted(
@@ -121,15 +138,29 @@ def snapshot(conn, project, request):
         c["review_events"] = rows(
             conn, "SELECT * FROM review_events WHERE local_id=? ORDER BY id", (local,)
         )
-        c["screening"] = screen_by_id[cid]
+        c["screening"] = screen_by_id.get(cid)
+        if c["screening"] is None:
+            c["screening"] = report_from_connection(conn, project, candidate_id=cid)["candidates"][
+                0
+            ]
         c["in_scope"] = cid in selected
+        if scoped and c["in_scope"]:
+            c["collection_review_scope"] = collections.identity(
+                conn, request.scope.collection_id, cid
+            )
+            c["collection_review_events"] = collections.records(
+                conn, "collection_reviews", request.scope.collection_id, cid
+            )
+            c["collection_review"] = collections.current_review(
+                conn, c["collection_review_scope"], c["collection_review_events"]
+            )
         c["image_projection"] = dict(
             conn.execute("SELECT * FROM images WHERE local_id=?", (local,)).fetchone()
         )
         records.append(c)
         if not c["in_scope"]:
             continue
-        review = c["review"]
+        review = c["collection_review"] if scoped else c["review"]
         label = review["label"]
         if label not in {"accepted", "rejected"}:
             block(
@@ -139,7 +170,16 @@ def snapshot(conn, project, request):
                 label=label,
             )
         else:
-            last = c["review_events"][-1] if c["review_events"] else None
+            applicable = (
+                [
+                    e
+                    for e in c["collection_review_events"]
+                    if e["scope"] == c["collection_review_scope"]
+                ]
+                if scoped
+                else c["review_events"]
+            )
+            last = applicable[-1] if applicable else None
             if not last or any(
                 last[k] != review.get(k) for k in ("label", "notes", "reviewer_email")
             ):
@@ -171,7 +211,7 @@ def snapshot(conn, project, request):
     config = HarvesterConfig.model_validate(yaml.safe_load(config_bytes))
     # Config and last evaluated policy are separate facts; never reinterpret evidence here.
     policy = screening["policy"]
-    if policy and policy["config"] != config.screening.model_dump(mode="json"):
+    if not scoped and policy and policy["config"] != config.screening.model_dump(mode="json"):
         warnings.append(
             {
                 "code": "config_policy_difference",
@@ -197,8 +237,8 @@ def snapshot(conn, project, request):
     duplicates, members = [], []
     conflicts = set()
     for aid, group in sorted(groups.items()):
-        accepted = [c for c in group if c["review"]["label"] == "accepted"]
-        rejected = [c for c in group if c["review"]["label"] == "rejected"]
+        accepted = [c for c in group if decision(c, 2 if scoped else 1)["label"] == "accepted"]
+        rejected = [c for c in group if decision(c, 2 if scoped else 1)["label"] == "rejected"]
         conflict = bool(accepted and rejected)
         if conflict:
             conflicts.add(aid)
@@ -211,7 +251,7 @@ def snapshot(conn, project, request):
                     "candidate_decisions": [
                         {
                             "candidate_id": c["candidate_id"],
-                            "label": c["review"]["label"],
+                            "label": decision(c, 2 if scoped and c["in_scope"] else 1)["label"],
                             "in_scope": c["in_scope"],
                         }
                         for c in group + outside
@@ -271,6 +311,12 @@ def snapshot(conn, project, request):
         | {e["asset_id"] for e in histories["evaluations"]}
         | {o["scope"]["asset_id"] for o in histories["overrides"]}
     )
+    if scoped:
+        assets_needed.update(
+            event.get("asset_id") or event.get("scope", {}).get("asset_id")
+            for events in collection_context["history"].values()
+            for event in events
+        )
     assets = {}
     for aid in sorted(assets_needed - {None}):
         row = conn.execute("SELECT * FROM assets WHERE asset_id=?", (aid,)).fetchone()
@@ -291,6 +337,11 @@ def snapshot(conn, project, request):
         | {r["operation_id"] for key in histories for r in histories[key]}
     )
     operation_ids.discard(None)
+    if scoped:
+        operation_ids.update(
+            e["operation_id"] for events in collection_context["history"].values() for e in events
+        )
+        operation_ids.update(e["operation_id"] for e in collection_context["search_contexts"])
     operations = []
     discovery_events = []
     has_discovery = conn.execute(
@@ -329,13 +380,20 @@ def snapshot(conn, project, request):
             block("evidence_missing", str(exc), path=value)
     if request.parent_freeze_id:
         try:
-            store.load(conn, project, request.parent_freeze_id, kind="freeze")
+            parent, _ = store.load(conn, project, request.parent_freeze_id, kind="freeze")
+            if parent["format_version"] != (2 if scoped else 1) or (
+                scoped and parent["scope"].get("collection_id") != request.scope.collection_id
+            ):
+                raise ValueError("Parent freeze must have the same scientific scope and format")
         except (ValueError, OSError) as exc:
             block("parent_freeze_invalid", str(exc), parent_freeze_id=request.parent_freeze_id)
+    request_data = request.model_dump(mode="json")
+    if not scoped:
+        request_data["scope"].pop("collection_id", None)
     data = {
-        "request": request.model_dump(mode="json"),
+        "request": request_data,
         "scope": {
-            **request.scope.model_dump(mode="json"),
+            **request_data["scope"],
             "resolved_candidate_ids": selected,
             "outside_scope_candidate_ids": sorted(set(by_id) - set(selected)),
             "all_current_candidate_inventory": all_rows,
@@ -376,7 +434,26 @@ def snapshot(conn, project, request):
             "near_duplicates": "Distinct hashes remain distinct assets.",
         },
     }
+    if scoped:
+        data["collection_context"] = collection_context
+        data["semantics"]["human_review_scope"] = (
+            "Independent collection/candidate/membership activation/asset decision; project reviews are contextual history only."
+        )
     return data
+
+
+def decision(candidate, version):
+    if version == 1:
+        return candidate["review"]
+    if version != 2:
+        raise ValueError("Unsupported scientific decision format")
+    review = candidate["collection_review"]
+    if (
+        review["scope"] != candidate["collection_review_scope"]
+        or review["scope"]["asset_id"] != candidate["asset_id"]
+    ):
+        raise ValueError("Collection review/asset scope mismatch")
+    return review
 
 
 def validate(project, *, request):
@@ -414,6 +491,7 @@ def create(project, *, request, expected_snapshot_sha256=None):
             raise ValueError("Configuration changed during freeze; retry validation")
         manifest = {
             **store.metadata(project, "freeze", parent_id=data["request"]["parent_freeze_id"]),
+            "format_version": 2 if "collection_context" in data else 1,
             **data,
             "software": store.software(project, conn),
         }

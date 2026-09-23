@@ -43,13 +43,25 @@ def deferred_until(conn, candidate_id):
     return None
 
 
-def select_downloads(conn, *, retry_failed=False, provider=None, query=None, candidate_ids=None):
+def select_downloads(
+    conn,
+    *,
+    retry_failed=False,
+    provider=None,
+    query=None,
+    candidate_ids=None,
+    allow_pending_scope=False,
+):
     """Intersect explicit scope with failed OR pending state, never include successes.
 
     Provider and query must match the same historical source relationship. Query
     matching is exact, not substring. An empty explicit ID list selects nothing.
     """
-    if not retry_failed and any(v is not None for v in (provider, query, candidate_ids)):
+    if (
+        not retry_failed
+        and not allow_pending_scope
+        and any(v is not None for v in (provider, query, candidate_ids))
+    ):
         raise ValueError(
             "Scopes are supported on retry-downloads; ordinary download selects pending records"
         )
@@ -115,19 +127,19 @@ def acquisition_summary(conn):
         assets = {r["asset_id"] for r in available}
         failed = sum(r["download_status"] == "failed" for r in group)
         deferred = sum(r["deferred"] for r in group)
-        return dict(
-            found_results=len(group),
-            successful_records=len(successful),
-            available_records=len(available),
-            available_images=len(assets),
-            unavailable_successful_records=len(successful) - len(available),
-            failed_downloads=failed,
-            pending=sum(r["download_status"] is None for r in group),
-            pending_deferred=sum(r["download_status"] is None and r["host_wait"] for r in group),
-            deferred_failures=deferred,
-            retry_available=failed - deferred,
-            shared_image_records=len(available) - len(assets),
-        )
+        return {
+            "found_results": len(group),
+            "successful_records": len(successful),
+            "available_records": len(available),
+            "available_images": len(assets),
+            "unavailable_successful_records": len(successful) - len(available),
+            "failed_downloads": failed,
+            "pending": sum(r["download_status"] is None for r in group),
+            "pending_deferred": sum(r["download_status"] is None and r["host_wait"] for r in group),
+            "deferred_failures": deferred,
+            "retry_available": failed - deferred,
+            "shared_image_records": len(available) - len(assets),
+        }
 
     return dict(
         counts(rows),

@@ -7,8 +7,9 @@ import html
 import json
 
 from stimulus_harvester.review.db import init_db
+
 from . import store
-from .snapshot import locate
+from .snapshot import decision, locate
 
 
 def membership_hash(members):
@@ -37,7 +38,7 @@ def assemble(project, *, freeze_id, parent_assembly_id=None):
                 c = candidates[cid]
                 if (
                     c["asset_id"] != member["asset_id"]
-                    or c["review"]["label"] != "accepted"
+                    or decision(c, freeze["format_version"])["label"] != "accepted"
                     or c["screening"]["effective_disposition"] == "excluded"
                 ):
                     raise ValueError(
@@ -70,6 +71,10 @@ def assemble(project, *, freeze_id, parent_assembly_id=None):
                 "verified_parent_bytes_and_membership_match": True if previous else None,
             },
         }
+        manifest["format_version"] = freeze["format_version"]
+        if freeze["format_version"] == 2:
+            manifest["collection_id"] = freeze["scope"]["collection_id"]
+            manifest["collection_name"] = freeze["collection_context"]["collection"]["name"]
         with store.staging(project, "assembly") as stage:
             for member in membership:
                 store.copy_verified(
@@ -113,6 +118,11 @@ def export_frozen(
         freeze, freeze_root = store.load(conn, project, assembly["freeze_id"], kind="freeze")
         if assembly["freeze_manifest_sha256"] != store.sha(store.canonical(freeze)):
             raise ValueError("Assembly/freeze binding failed")
+        if assembly["format_version"] != freeze["format_version"] or (
+            freeze["format_version"] == 2
+            and assembly.get("collection_id") != freeze["scope"]["collection_id"]
+        ):
+            raise ValueError("Assembly scientific scope mismatch")
         claims = {
             s["source_id"]: s
             for c in freeze["candidates"] + freeze["related_candidates"]
@@ -144,6 +154,10 @@ def export_frozen(
                 "assembly": "assembly-manifest.json",
             },
         }
+        manifest["format_version"] = freeze["format_version"]
+        if freeze["format_version"] == 2:
+            manifest["collection_id"] = freeze["scope"]["collection_id"]
+            manifest["collection_name"] = freeze["collection_context"]["collection"]["name"]
         with store.staging(project, "frozen_export") as stage:
             for m in rows:
                 store.copy_verified(
@@ -194,11 +208,20 @@ def export_frozen(
                 "license_policy": license_policy,
                 "scope_count": len(freeze["candidates"]),
                 "frozen_review_counts": {
-                    label: sum(c["review"]["label"] == label for c in freeze["candidates"])
+                    label: sum(
+                        decision(c, freeze["format_version"])["label"] == label
+                        for c in freeze["candidates"]
+                    )
                     for label in ["accepted", "rejected"]
                 },
             }
             (stage / "summary.json").write_bytes(store.canonical(summary))
+            if freeze["format_version"] == 2:
+                summary.update(
+                    collection_id=manifest["collection_id"],
+                    collection_name=manifest["collection_name"],
+                )
+                (stage / "summary.json").write_bytes(store.canonical(summary))
             cards = []
             for row in rows:
                 claim_text = json.dumps(
@@ -221,6 +244,8 @@ def export_frozen(
                 )
             page = '<!doctype html><html lang="en"><meta charset="utf-8"><title>Frozen stimuli</title><style>body{font:16px system-ui;max-width:1100px;margin:30px auto}article{border-top:1px solid #aaa;padding:20px}img{max-width:100%;max-height:500px}pre{white-space:pre-wrap;overflow-wrap:anywhere}</style>'
             page += f"<h1>Frozen stimuli</h1><p>{len(rows)} stimuli. Source claims are not verified reuse permission.</p>"
+            if freeze["format_version"] == 2:
+                page += f"<p>Collection: {html.escape(manifest['collection_name'])}. Independent collection review decisions.</p>"
             page += '<p><a href="freeze/manifest.json">Freeze evidence</a> · <a href="assembly-manifest.json">Assembly evidence</a> · <a href="manifest.json">Export manifest</a></p>'
             page += "".join(cards) + "</html>"
             (stage / "index.html").write_text(page, encoding="utf-8")

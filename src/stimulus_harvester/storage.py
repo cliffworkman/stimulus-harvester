@@ -245,6 +245,9 @@ def record_discovery(
             json.dumps(record, ensure_ascii=False, sort_keys=True),
         ),
     )
+    from stimulus_harvester.collections import discovered
+
+    discovered(conn, source_id, candidate_id)
     return source_id
 
 

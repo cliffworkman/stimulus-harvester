@@ -6,8 +6,8 @@ The existing stage implementations remain shared and usable by headless callers.
 
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import platform
 import shutil
 import sys
@@ -48,6 +48,10 @@ class OperationResult:
 
 
 def _invoke(project: Project, stage: str, options: dict):
+    if stage == "collection":
+        from stimulus_harvester.collections import mutate
+
+        return mutate(project, **options)
     if stage == "screen-policy":
         from stimulus_harvester.workspace import configure_person_screening
 
@@ -57,7 +61,7 @@ def _invoke(project: Project, stage: str, options: dict):
 
         return save_configuration(project, **options)
     if stage in {"review", "review-batch"}:
-        from stimulus_harvester.review.service import record_review, record_batch
+        from stimulus_harvester.review.service import record_batch, record_review
 
         conn = init_db(project.paths.db_path)
         try:
@@ -87,15 +91,35 @@ def _invoke(project: Project, stage: str, options: dict):
 
         return override(project, **options)
     if stage == "search":
+        from stimulus_harvester.collections import SEARCH_CONTEXT, search_context
         from stimulus_harvester.search import run_search_stage
 
-        return run_search_stage(
-            project.config,
-            project.root.name,
-            project.paths.config_snapshot_path,
-            project_root=project.root,
-            detailed=True,
-        )[1]
+        token = None
+        context = None
+        if options.get("collection_id"):
+            actor = options.get("actor", "").strip()
+            if not actor:
+                raise ValueError("Enter an investigator identity for collection discovery")
+            conn = init_db(project.paths.db_path)
+            try:
+                context = search_context(
+                    conn, options["collection_id"], actor, options.get("expected_revision")
+                )
+            finally:
+                conn.close()
+            token = SEARCH_CONTEXT.set(context)
+        try:
+            return run_search_stage(
+                project.config,
+                project.root.name,
+                project.paths.config_snapshot_path,
+                project_root=project.root,
+                detailed=True,
+                collection_context=context,
+            )[1]
+        finally:
+            if token is not None:
+                SEARCH_CONTEXT.reset(token)
     if stage in {"download", "retry-downloads"}:
         from stimulus_harvester.download import run_download_stage
 
@@ -144,6 +168,7 @@ def run_stage(
         "review",
         "review-batch",
         "screen-policy",
+        "collection",
     }:
         raise ValueError(f"Unknown stage: {stage}")
     frozen_input = stage in {"assemble", "export-frozen"}

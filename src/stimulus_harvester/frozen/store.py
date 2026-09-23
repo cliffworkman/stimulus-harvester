@@ -63,7 +63,7 @@ def ensure_schema(conn):
 def software(project, conn):
     package = Path(__file__).resolve().parents[1]
     versions = {"project": project.schema_version, "frozen": 1}
-    for name in ("screening", "discovery"):
+    for name in ("screening", "discovery", "collections"):
         if conn.execute("SELECT 1 FROM sqlite_master WHERE name=?", (name + "_schema",)).fetchone():
             versions[name] = conn.execute(
                 f"SELECT version FROM {name}_schema WHERE singleton=1"
@@ -214,10 +214,40 @@ def verify_directory(root, *, expected_sha256=None):
     manifest = json.loads(data)
     if (
         manifest.get("format") != "stimulus-harvester-frozen"
-        or manifest["format_version"] != 1
+        or manifest["format_version"] not in {1, 2}
         or canonical(manifest) != data
     ):
         raise ValueError("Unsupported/noncanonical artifact manifest")
+    if manifest["format_version"] == 2:
+        from .snapshot import decision
+
+        if manifest["kind"] == "freeze":
+            context = manifest["collection_context"]
+            cid = context["collection"]["collection_id"]
+            if (
+                manifest["scope"]["mode"] != "collection"
+                or manifest["scope"]["collection_id"] != cid
+            ):
+                raise ValueError("Collection freeze scope mismatch")
+            members = {m["candidate_id"]: m for m in context["memberships"]}
+            if set(members) != set(manifest["scope"]["resolved_candidate_ids"]):
+                raise ValueError("Collection snapshot membership mismatch")
+            for c in manifest["candidates"]:
+                review = decision(c, 2)
+                scope = review["scope"]
+                member = members[c["candidate_id"]]
+                if (
+                    scope["collection_id"] != cid
+                    or scope["candidate_id"] != c["candidate_id"]
+                    or scope["activation_id"] != member["activation_id"]
+                    or scope["membership_id"] != member["membership_id"]
+                ):
+                    raise ValueError("Collection review membership mismatch")
+        elif manifest["kind"] in {"assembly", "frozen_export"}:
+            if not manifest.get("collection_id"):
+                raise ValueError("Collection artifact requires collection identity")
+        else:
+            raise ValueError("Unsupported collection artifact kind")
     expected = {"manifest.json", "checksums.sha256"}
     for entry in manifest["files"]:
         path = internal(root, entry["path"])

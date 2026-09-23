@@ -1,8 +1,11 @@
 # Arc B collection design and scientific-contract boundary
 
-Status: pre-implementation design; stopped at the expressly reserved review/freeze
-fork. No collection tables, migrations, UI, or scientific behavior have been
-implemented. Baseline: `2c48b01ede55b68b4467c21361d86cdd43155407` (rc5).
+Status: the reserved review/freeze contract was explicitly approved in Cliff's
+subsequent Arc B direction on 2026-09-23. Full implementation is authorized;
+organization-only scope is explicitly excluded. The original design below is
+retained as the architecture decision history. See `collections.md` for the
+implemented behavior and limitations. Original baseline:
+`2c48b01ede55b68b4467c21361d86cdd43155407` (rc5).
 
 The supplied Arc B direction approves provenance-based candidate membership and
 collection-specific screening. It also explicitly requires a stop before choosing

@@ -6,12 +6,13 @@ import json
 import platform
 from collections import Counter
 
-from stimulus_harvester.review.db import init_db
-from stimulus_harvester.screening.config import ScreeningConfig, RuleConfig, Disposition
-from stimulus_harvester.screening.detectors import build_detector, file_hash, normalize
-from stimulus_harvester.screening.store import ensure_schema, append_observation, records
-from stimulus_harvester.storage import ACTIVE_OPERATION, new_id, now
 from pydantic import TypeAdapter
+
+from stimulus_harvester.review.db import init_db
+from stimulus_harvester.screening.config import Disposition, RuleConfig, ScreeningConfig
+from stimulus_harvester.screening.detectors import build_detector, file_hash, normalize
+from stimulus_harvester.screening.store import append_observation, ensure_schema, records
+from stimulus_harvester.storage import ACTIVE_OPERATION, new_id, now
 
 
 def evaluate(rule: RuleConfig, observation: dict):
@@ -37,7 +38,16 @@ def candidate_rows(conn, candidate_id=None):
     ]
 
 
-def run_screen(project, *, screening_config=None, reuse_raw=False):
+def run_screen(project, *, screening_config=None, reuse_raw=False, collection_id=None):
+    if collection_id:
+        from stimulus_harvester import collections
+
+        with init_db(project.paths.db_path) as lookup:
+            collections.collection(lookup, collection_id, active=True)
+            policies = collections.records(lookup, "collection_policies", collection_id)
+            if screening_config is None:
+                screening_config = policies[-1]["config"] if policies else {}
+        lookup.close()
     config = (
         ScreeningConfig.model_validate(screening_config)
         if screening_config is not None
@@ -56,6 +66,8 @@ def run_screen(project, *, screening_config=None, reuse_raw=False):
             "timestamp": now(),
             "config": config.model_dump(mode="json"),
         }
+        if collection_id:
+            policy["collection_id"] = collection_id
         with conn:
             conn.execute(
                 "INSERT INTO screening_policies VALUES(?,?,?,?)",
@@ -65,6 +77,9 @@ def run_screen(project, *, screening_config=None, reuse_raw=False):
             json.dumps(policy, indent=2), encoding="utf-8"
         )
         candidates = candidate_rows(conn)
+        if collection_id:
+            ids = {m["candidate_id"] for m in collections.memberships(conn, collection_id)}
+            candidates = [c for c in candidates if c["candidate_id"] in ids]
         observed = {}
         counts = Counter()
         previous = records(conn, "observations") if reuse_raw else []
@@ -213,7 +228,7 @@ def run_screen(project, *, screening_config=None, reuse_raw=False):
             if detector:
                 detector.close()
                 detectors.remove(detector)
-        for candidate in candidates:
+        for candidate in [] if collection_id else candidates:
             with conn:
                 for rule in config.rules:
                     observation = observed[(candidate["candidate_id"], rule.source)]
@@ -248,7 +263,14 @@ def run_screen(project, *, screening_config=None, reuse_raw=False):
                             json.dumps(event),
                         ),
                     )
-        report = report_from_connection(conn, project)
+        if collection_id:
+            with conn:
+                collections.evaluate_policy(
+                    conn, project, collection_id, config.model_dump(mode="json")
+                )
+            report = collections.screening_report(conn, project, collection_id)
+        else:
+            report = report_from_connection(conn, project)
         result = {
             "policy_id": policy["policy_id"],
             "observations": dict(counts),
@@ -269,7 +291,7 @@ def run_screen(project, *, screening_config=None, reuse_raw=False):
 
 def report_from_connection(conn, project, *, include_history=True, candidate_id=None):
     policies = records(conn, "screening_policies")
-    policy = policies[-1] if policies else None
+    policy = next((p for p in reversed(policies) if not p.get("collection_id")), None)
     required = [r["id"] for r in policy["config"]["rules"]] if policy else []
     where = "WHERE candidate_id=?" if candidate_id is not None else ""
     params = (candidate_id,) if candidate_id is not None else ()

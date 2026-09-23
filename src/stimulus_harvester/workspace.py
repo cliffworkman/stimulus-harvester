@@ -10,7 +10,7 @@ import io
 import json
 import os
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 
@@ -48,6 +48,9 @@ class Workspace:
     providers: dict
     recovery: list[dict]
     version: str = __version__
+    collections: list = field(default_factory=list)
+    collection_id: str | None = None
+    all_candidates: list = field(default_factory=list)
 
 
 def default_configuration(name):
@@ -187,7 +190,7 @@ def recovery_diagnostics(project, artifacts):
     return records
 
 
-def workspace(path):
+def workspace(path, collection_id=None):
     project = services.open_project(Path(path), validate_config=False)
     warnings = []
     try:
@@ -266,6 +269,62 @@ def workspace(path):
         summary["available"] -= unreadable
         summary["unavailable"] += unreadable
         summary["unique_images"] = len({c["asset_id"] for c in candidates if c["displayable"]})
+        from stimulus_harvester import collections as groups
+
+        collection_list = groups.project_view(conn, candidates)
+        all_candidates = candidates
+        if collection_id:
+            selected_collection = groups.collection(conn, collection_id)
+            screening = groups.screening_report(conn, project, collection_id)
+            screened = {r["candidate_id"]: r for r in screening["candidates"]}
+            scoped_candidates = []
+            for c in candidates:
+                m = next((m for m in c["collections"] if m["collection_id"] == collection_id), None)
+                if m is None:
+                    continue
+                r = m["review"]
+                scoped_candidates.append(
+                    dict(
+                        c,
+                        project_review_label=c["label"],
+                        label=r["label"],
+                        notes=r["notes"],
+                        reviewer_email=r["reviewer_email"],
+                        collection_review=r,
+                        review_text={
+                            "accepted": "Accepted",
+                            "maybe": "Maybe",
+                            "rejected": "Rejected",
+                            "unrated": "Unreviewed",
+                        }[r["label"]],
+                        screening=screened[c["candidate_id"]],
+                    )
+                )
+            candidates = scoped_candidates
+            group = next(g for g in collection_list if g["collection_id"] == collection_id)
+            summary.update(
+                {
+                    k: group[k]
+                    for k in (
+                        "found",
+                        "available",
+                        "failed",
+                        "pending",
+                        "reviewed",
+                        "unique_images",
+                        "unavailable",
+                    )
+                }
+            )
+            summary["retry_ids"] = [c["candidate_id"] for c in candidates if c["retry_eligible"]]
+            summary["failures"] = dict(
+                Counter(c["failure_kind"] for c in candidates if c["failure_kind"])
+            )
+            summary["screened"] = sum(c["screening_text"] != "Not run" for c in candidates)
+            summary["unreadable_local"] = sum(
+                c["available"] and not c["displayable"] for c in candidates
+            )
+            status["collection"] = selected_collection
     finally:
         conn.close()
     artifacts = services.list_frozen_artifacts(project)
@@ -288,10 +347,13 @@ def workspace(path):
         warnings,
         providers,
         recovery,
+        collections=collection_list,
+        collection_id=collection_id,
+        all_candidates=all_candidates,
     )
 
 
-def inspect_candidate(path, candidate_id):
+def inspect_candidate(path, candidate_id, collection_id=None):
     from stimulus_harvester.screening.engine import report_from_connection
 
     project = services.open_project(Path(path), validate_config=False)
@@ -335,6 +397,26 @@ def inspect_candidate(path, candidate_id):
         evidence["near_duplicate"] = dict(image)
         evidence["image"] = dict(image)
         report = report_from_connection(conn, project, candidate_id=candidate_id)
+        from stimulus_harvester import collections as groups
+
+        rows = [dict(r) for r in conn.execute("SELECT candidate_id,asset_id FROM candidates")]
+        groups.project_view(conn, rows)
+        evidence["collections"] = next(
+            r["collections"] for r in rows if r["candidate_id"] == candidate_id
+        )
+        evidence["membership_history"] = groups.records(
+            conn, "membership_events", candidate_id=candidate_id
+        )
+        if collection_id:
+            scope = groups.identity(conn, collection_id, candidate_id)
+            evidence["project_review"] = evidence["review"]
+            evidence["project_review_events"] = evidence["review_events"]
+            evidence["review"] = groups.current_review(conn, scope)
+            evidence["review_events"] = groups.records(
+                conn, "collection_reviews", collection_id, candidate_id
+            )
+            evidence["collection_id"] = collection_id
+            report = groups.screening_report(conn, project, collection_id)
     finally:
         conn.close()
     evidence["screening"] = {
@@ -376,7 +458,12 @@ def freeze_preparation(path, request):
                 "membership": data["membership"],
                 "summary": {
                     "scope_size": len(data["candidates"]),
-                    "reviews": dict(Counter(c["review"]["label"] for c in data["candidates"])),
+                    "reviews": dict(
+                        Counter(
+                            c.get("collection_review", c["review"])["label"]
+                            for c in data["candidates"]
+                        )
+                    ),
                     "screening_exclusions": sum(
                         c["screening"]["effective_disposition"] == "excluded"
                         for c in data["candidates"]
@@ -412,7 +499,9 @@ def create_desktop_fixture(path):
     return project
 
 
-def configure_person_screening(project, *, model, low_threshold, high_threshold, policy, device):
+def configure_person_screening(
+    project, *, model, low_threshold, high_threshold, policy, device, collection_id=None, actor=""
+):
     """Explicit user-chosen policy recipe; not a production detector/threshold default."""
     if policy not in {"strict_zero_human", "review_all"}:
         raise ValueError("Choose an explicit screening rule policy")
@@ -441,4 +530,14 @@ def configure_person_screening(project, *, model, low_threshold, high_threshold,
             }
         ],
     }
+    if collection_id:
+        from stimulus_harvester.collections import mutate
+
+        return mutate(
+            project,
+            action="policy",
+            collection_id=collection_id,
+            actor=actor,
+            configuration=config["screening"],
+        )
     return save_configuration(project, configuration=config)

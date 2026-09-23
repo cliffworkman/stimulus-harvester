@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 
 from stimulus_harvester.config import HarvesterConfig, config_to_yaml_str
-from stimulus_harvester.paths import RunPaths, run_paths_for, load_run_config
+from stimulus_harvester.paths import RunPaths, load_run_config, run_paths_for
 from stimulus_harvester.provenance import init_reproducibility_manifest, mark_stage_complete
 from stimulus_harvester.review.db import init_db, upsert_image_from_search
 from stimulus_harvester.search.commons import CommonsAdapter
@@ -27,6 +27,7 @@ def run_search_stage(
     *,
     project_root: Path | None = None,
     detailed: bool = False,
+    collection_context: dict | None = None,
 ):
     paths = RunPaths(project_root) if project_root else run_paths_for(config.output_root, run_id)
     paths.ensure()
@@ -34,6 +35,14 @@ def run_search_stage(
         paths.config_snapshot_path.write_text(config_to_yaml_str(config), encoding="utf-8")
     else:
         config = load_run_config(paths.root)
+    if collection_context:
+        config = config.model_copy(
+            update={
+                "search": config.search.model_copy(
+                    update={"seed_queries": [p["text"] for p in collection_context["phrases"]]}
+                )
+            }
+        )
     if not paths.reproducibility_path.exists():
         init_reproducibility_manifest(
             paths.reproducibility_path, run_id=run_id, config=config, config_path=config_path
