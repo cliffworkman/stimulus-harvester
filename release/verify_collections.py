@@ -100,7 +100,11 @@ def child(work, evidence):
         for _ in range(4):
             deadline = time.monotonic() + 90
             while w.session.busy:
-                QTest.qWait(20)
+                # qWait's tight native polling can starve this Python QThread
+                # on Windows. Dispatch events and release the GIL explicitly;
+                # keep the same deadline and all scientific assertions.
+                app.processEvents()
+                time.sleep(0.02)
                 assert time.monotonic() < deadline, "GUI worker timeout"
             QTest.qWait(40)
 
