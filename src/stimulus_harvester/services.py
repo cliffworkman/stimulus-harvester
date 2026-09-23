@@ -56,11 +56,13 @@ def _invoke(project: Project, stage: str, options: dict):
         from stimulus_harvester.workspace import save_configuration
 
         return save_configuration(project, **options)
-    if stage == "review":
-        from stimulus_harvester.review.service import record_review
+    if stage in {"review", "review-batch"}:
+        from stimulus_harvester.review.service import record_review, record_batch
 
         conn = init_db(project.paths.db_path)
         try:
+            if stage == "review-batch":
+                return record_batch(conn, **options)
             return record_review(conn, require_identity=True, **options)
         finally:
             conn.close()
@@ -140,6 +142,7 @@ def run_stage(
         "export-frozen",
         "configure",
         "review",
+        "review-batch",
         "screen-policy",
     }:
         raise ValueError(f"Unknown stage: {stage}")
@@ -203,8 +206,12 @@ def run_stage(
                 error = None
                 if status == "failed":
                     error = {
-                        "type": "AcquisitionFailure" if stage in {"download", "retry-downloads"} else "DiscoveryFailure",
-                        "message": "Images could not be downloaded. Retry failed downloads without repeating the search; server waits and denials are retained in acquisition evidence." if stage in {"download", "retry-downloads"} else "Discovery failed; inspect discovery-report for persisted request and setup diagnostics",
+                        "type": "AcquisitionFailure"
+                        if stage in {"download", "retry-downloads"}
+                        else "DiscoveryFailure",
+                        "message": "Images could not be downloaded. Retry failed downloads without repeating the search; server waits and denials are retained in acquisition evidence."
+                        if stage in {"download", "retry-downloads"}
+                        else "Discovery failed; inspect discovery-report for persisted request and setup diagnostics",
                     }
                 outcome = OperationResult(operation_id, stage, status, result, error)
         except (KeyboardInterrupt, SystemExit) as exc:

@@ -421,7 +421,7 @@ class DiscoverPage(Page):
         return config
 
     def populate(self, state):
-        self.browser.populate(state.candidates)
+        self.browser.populate(state.candidates, state.path)
         counts = state.status["acquisition"]
         human = state.status["curation"]
         self.acquisition_summary.setText(summary_text(human["summary"]))
@@ -649,7 +649,7 @@ class ScreenPage(Page):
             self.window.configure_then("screen", config)
 
     def populate(self, state):
-        self.browser.populate(state.candidates)
+        self.browser.populate(state.candidates, state.path)
         report = state.screening
         show_json(
             self.rule_details,
@@ -962,22 +962,29 @@ class ReviewPage(Page):
             window,
             "Viewing images does not record a review. View filters never change freeze membership.",
         )
-        identity = QFormLayout()
+        self.box.itemAt(0).widget().hide()
+        self.setToolTip(
+            "Viewing images never records a review. View filters never change freeze membership."
+        )
+        identity = QHBoxLayout()
         self.reviewer = QLineEdit()
         self.reviewer.setPlaceholderText("Investigator name or email (required)")
-        identity.addRow("Investigator", self.reviewer)
+        self.reviewer.setAccessibleName("Investigator identity required for a review decision")
+        identity.addWidget(text_label("Investigator"))
+        identity.addWidget(self.reviewer, 1)
+        self.notes = QLineEdit()
+        self.notes.setPlaceholderText("Notes for this decision (optional)")
+        self.notes.setAccessibleName("Notes for the current review decision")
+        identity.addWidget(self.notes, 1)
         self.box.addLayout(identity)
         self.modes = QTabWidget()
         self.box.addWidget(self.modes, 1)
         review = QWidget()
         layout = QVBoxLayout(review)
-        self.browser = CandidateBrowser(available_only=True)
+        self.browser = CandidateBrowser(available_only=True, triage=True)
         self.inspector = Inspector()
         self.browser.inspect.connect(lambda cid: window.inspect(self.inspector, cid))
         layout.addWidget(candidate_split(self.browser, self.inspector), 1)
-        self.notes = QLineEdit()
-        self.notes.setPlaceholderText("Investigator notes for this decision")
-        self.browser.layout().addWidget(self.notes)
         row = QHBoxLayout()
         for label, title, key in (
             ("accepted", "Accept", "Alt+A"),
@@ -986,10 +993,23 @@ class ReviewPage(Page):
         ):
             action = button(row, title, lambda checked=False, label=label: self.review(label))
             action.setToolTip(f"{title} ({key})")
-            shortcut = QShortcut(QKeySequence(key), review)
+            shortcut = QShortcut(QKeySequence(key), self)
             shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
-            shortcut.activated.connect(lambda label=label: self.review(label))
+            shortcut.activated.connect(
+                lambda label=label: self.review(label) if self.modes.currentIndex() == 0 else None
+            )
         self.browser.layout().addLayout(row)
+        self.advance = QCheckBox("Advance")
+        self.advance.setToolTip("After an explicit decision, move to the next image in this view")
+        self.advance.setAccessibleName("After a decision, move to the next image")
+        self.next_after_review = None
+        batch_row = QHBoxLayout()
+        button(batch_row, "Select", self.mark_current)
+        self.batch_button = button(batch_row, "Review selected (0)…", self.batch_review)
+        self.batch_button.setEnabled(False)
+        batch_row.addWidget(self.advance)
+        self.browser.marks_changed.connect(self.update_marks)
+        self.browser.layout().addLayout(batch_row)
         override_widget = QWidget()
         override = QHBoxLayout(override_widget)
         self.disposition = QComboBox()
@@ -1008,15 +1028,93 @@ class ReviewPage(Page):
 
     def review(self, label):
         current = self.inspector.current
-        if not current:
+        if not current or current["candidate_id"] != self.browser.candidate_id():
             self.window.notice("Select and inspect an image first.")
             return
+        ids = self.browser.visible_ids
+        index = ids.index(current["candidate_id"]) if current["candidate_id"] in ids else -1
+        self.next_after_review = (
+            ids[index + 1] if self.advance.isChecked() and 0 <= index < len(ids) - 1 else None
+        )
         self.submit(
             "review",
             local_id=current["evidence"]["primary_local_id"],
             label=label,
             notes=self.notes.text(),
             reviewer_email=self.reviewer.text(),
+        )
+
+    def mark_current(self):
+        cid = self.browser.candidate_id()
+        if cid:
+            self.browser.mark(cid, cid not in self.browser.marked_ids)
+            self.browser.refresh_grid()
+
+    def update_marks(self):
+        n = len(self.browser.marked_ids)
+        self.batch_button.setText(f"Review selected ({n})…")
+        self.batch_button.setEnabled(bool(n))
+
+    def batch_review(self):
+        rows = [
+            self.browser.rows[cid]
+            for cid in self.browser.visible_ids
+            if cid in self.browser.marked_ids
+        ]
+        if not rows:
+            return
+        if not self.reviewer.text().strip():
+            self.window.notice("Enter the investigator identity before recording a batch review.")
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Preview exact batch scope")
+        dialog.resize(600, 450)
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(
+            text_label(
+                f"{len(rows)} explicitly selected candidates. Other histories of the same bytes are not included automatically.\n"
+                "Maybe keeps images for further inspection; it is not acceptance. Reject records investigator rejection. "
+                "Later decisions supersede these records without deleting history. Screening and frozen artifacts do not change."
+            )
+        )
+        scope = QPlainTextEdit()
+        scope.setReadOnly(True)
+        scope.setPlainText(
+            "\n\n".join(f"{r['title']} · {r['review_text']}\n{r['candidate_id']}" for r in rows)
+        )
+        layout.addWidget(scope, 1)
+        choice = QComboBox()
+        choice.addItem("Choose a decision", None)
+        choice.addItem("Maybe — inspect further", "maybe")
+        choice.addItem("Reject", "rejected")
+        layout.addWidget(choice)
+        notes = QLineEdit()
+        notes.setPlaceholderText("Note applied to every selected candidate")
+        layout.addWidget(notes)
+        layout.addWidget(text_label(f"Investigator: {self.reviewer.text().strip()}"))
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.button(QDialogButtonBox.StandardButton.Save).setText("Record this batch")
+        buttons.button(QDialogButtonBox.StandardButton.Save).setEnabled(False)
+        choice.currentIndexChanged.connect(
+            lambda: buttons.button(QDialogButtonBox.StandardButton.Save).setEnabled(
+                bool(choice.currentData())
+            )
+        )
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        clear = buttons.addButton("Clear selection", QDialogButtonBox.ButtonRole.ResetRole)
+        clear.clicked.connect(lambda: (self.browser.clear_marks(), dialog.reject()))
+        layout.addWidget(buttons)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        self.submit(
+            "review-batch",
+            selection=[{k: r[k] for k in ("candidate_id", "asset_id", "label")} for r in rows],
+            label=choice.currentData(),
+            notes=notes.text(),
+            reviewer_email=self.reviewer.text().strip(),
         )
 
     def override(self):
@@ -1045,7 +1143,7 @@ class ReviewPage(Page):
             )
 
     def populate(self, state):
-        self.browser.populate(state.candidates)
+        self.browser.populate(state.candidates, state.path)
         self.freeze.populate(state)
 
 

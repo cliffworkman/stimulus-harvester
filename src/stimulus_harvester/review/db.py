@@ -115,23 +115,34 @@ _SORT_COLUMNS = {
 
 def init_db(db_path: Path) -> sqlite3.Connection:
     from stimulus_harvester.storage import connect_database
+
     return connect_database(db_path, _SCHEMA)
 
 
-def upsert_image_from_search(conn: sqlite3.Connection, result: SearchResult, run_id: str,
-                             *, record_source: bool = True, commit: bool = True) -> str:
+def upsert_image_from_search(
+    conn: sqlite3.Connection,
+    result: SearchResult,
+    run_id: str,
+    *,
+    record_source: bool = True,
+    commit: bool = True,
+) -> str:
     """Keep the first-source legacy projection while appending every source claim.
 
     A shared URL reuses its existing candidate. Original provider-derived IDs stay
     available as aliases, including those whose URL was historically deduplicated.
     """
     from stimulus_harvester.storage import candidate_for, record_discovery
+
     original = result
     # Same URL reuses the working candidate; every discovery keeps its own claims.
-    existing = conn.execute("SELECT local_id FROM images WHERE local_id=?", (result.local_id,)).fetchone()
+    existing = conn.execute(
+        "SELECT local_id FROM images WHERE local_id=?", (result.local_id,)
+    ).fetchone()
     if existing is None:
-        existing = conn.execute("SELECT local_id FROM images WHERE image_url=? ORDER BY local_id",
-                                (result.image_url,)).fetchone()
+        existing = conn.execute(
+            "SELECT local_id FROM images WHERE image_url=? ORDER BY local_id", (result.image_url,)
+        ).fetchone()
     if existing:
         result = result.model_copy(update={"local_id": existing[0]})
     conn.execute(
@@ -222,9 +233,10 @@ def list_all_known_hashes(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 
 def update_download(conn: sqlite3.Connection, record: DownloadRecord) -> None:
     from stimulus_harvester.storage import connection_root, record_acquisition, stored_path
-    record = record.model_copy(update={
-        "file_path": stored_path(connection_root(conn), record.file_path, legacy=True)
-    })
+
+    record = record.model_copy(
+        update={"file_path": stored_path(connection_root(conn), record.file_path, legacy=True)}
+    )
     conn.execute(
         """
         UPDATE images SET
@@ -319,6 +331,7 @@ def set_review_label(
     notes: str | None,
     scene_cluster_id: str | None = None,
     reviewer_email: str | None = None,
+    commit: bool = True,
 ) -> sqlite3.Row:
     label_value = label.value if isinstance(label, ReviewLabel) else label
     conn.execute(
@@ -341,7 +354,8 @@ def set_review_label(
         """,
         (local_id, label_value, notes, scene_cluster_id, reviewer_email),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     row = get_image(conn, local_id)
     assert row is not None
     return row
@@ -444,7 +458,9 @@ def summary_counts(conn: sqlite3.Connection) -> dict[str, Any]:
     }
     by_license = {
         (r["license"] or "unknown"): r["n"]
-        for r in conn.execute("SELECT license, COUNT(*) AS n FROM images GROUP BY license").fetchall()
+        for r in conn.execute(
+            "SELECT license, COUNT(*) AS n FROM images GROUP BY license"
+        ).fetchall()
     }
     total = conn.execute("SELECT COUNT(*) AS n FROM images").fetchone()["n"]
     return {"by_label": by_label, "by_source": by_source, "by_license": by_license, "total": total}

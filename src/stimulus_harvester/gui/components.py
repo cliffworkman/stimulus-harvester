@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSpinBox,
     QSplitter,
+    QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
@@ -37,6 +38,7 @@ from stimulus_harvester.curation import (
     screening_label,
     title_for,
 )
+from .thumbnails import ThumbnailGrid
 
 
 def text_label(text=""):
@@ -242,7 +244,8 @@ class Inspector(QWidget):
                 f"{source['provider']} · {source.get('query') or 'Search phrase not supplied'}\nExact claim: {source.get('license') or 'Not supplied'}\nLink: {source.get('license_url') or 'Not supplied'}"
             )
         other_sources = [
-            source for other in evidence["shared_candidates"]
+            source
+            for other in evidence["shared_candidates"]
             if other["candidate_id"] != value["candidate_id"]
             for source in other.get("sources", [])
         ]
@@ -345,11 +348,16 @@ class SortItem(QTableWidgetItem):
 class CandidateBrowser(QWidget):
     inspect = Signal(str)
     cleared = Signal()
+    marks_changed = Signal()
 
-    def __init__(self, available_only=False):
+    def __init__(self, available_only=False, triage=False):
         super().__init__()
         self.setMinimumWidth(200)
         self.rows = {}
+        self.root = None
+        self.marked_ids = set()
+        self.visible_ids = []
+        self.page = 0
         box = QVBoxLayout(self)
         box.setContentsMargins(0, 0, 0, 0)
         top = QHBoxLayout()
@@ -381,6 +389,7 @@ class CandidateBrowser(QWidget):
                 ("screening", "Screening"),
                 ("license", "Exact license claim"),
                 ("failure", "Failure reason"),
+                ("shared", "Exact-byte histories"),
             )
         ):
             combo = QComboBox()
@@ -401,7 +410,7 @@ class CandidateBrowser(QWidget):
             spin.setPrefix(label)
             spin.setAccessibleName(label + "pixels")
             spin.valueChanged.connect(self.filter_rows)
-            form.addWidget(spin, 3, i)
+            form.addWidget(spin, 4, i)
         self.filter_dialog = QDialog(self)
         self.filter_dialog.setWindowTitle("Filter this view")
         filters_layout = QVBoxLayout(self.filter_dialog)
@@ -421,9 +430,33 @@ class CandidateBrowser(QWidget):
         self.filter.setAccessibleName("Find images")
         box.addWidget(self.filter)
         self.counts = text_label()
-        self.counts.setMaximumHeight(48)
+        self.counts.setFixedHeight(20)
+        self.counts.setWordWrap(False)
         box.addWidget(self.counts)
-        self.table = QTableWidget(0, 8)
+        controls = QHBoxLayout()
+        self.view = QComboBox()
+        self.view.addItems(["Table", "Thumbnails"])
+        self.view.setAccessibleName("Image browsing view")
+        controls.addWidget(self.view)
+        self.order = QComboBox()
+        for label, column in (
+            ("First discovered", 8),
+            ("Title", 0),
+            ("Width", 6),
+            ("Height", 7),
+            ("Human review", 1),
+        ):
+            self.order.addItem(label, column)
+        self.order.setAccessibleName("Sort image view, ascending")
+        controls.addWidget(self.order)
+        self.previous = button(controls, "‹", lambda: self.move(-1))
+        self.previous.setAccessibleName("Previous image in filtered order (Alt+Left)")
+        self.position = text_label("No image selected")
+        controls.addWidget(self.position, 1)
+        self.next = button(controls, "›", lambda: self.move(1))
+        self.next.setAccessibleName("Next image in filtered order (Alt+Right)")
+        box.addLayout(controls)
+        self.table = QTableWidget(0, 9)
         self.table.setHorizontalHeaderLabels(
             [
                 "Image",
@@ -434,22 +467,115 @@ class CandidateBrowser(QWidget):
                 "Availability",
                 "Width",
                 "Height",
+                "First discovered",
             ]
         )
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table.setSortingEnabled(True)
-        self.table.sortByColumn(0, Qt.SortOrder.AscendingOrder)
+        self.table.sortByColumn(8, Qt.SortOrder.AscendingOrder)
+        self.table.setColumnHidden(8, True)
+        self.order.currentIndexChanged.connect(
+            lambda: self.table.sortByColumn(self.order.currentData(), Qt.SortOrder.AscendingOrder)
+        )
         self.table.setMinimumHeight(100)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         for i, width in enumerate((175, 100, 130, 200, 170, 105, 65, 65)):
             self.table.setColumnWidth(i, width)
-        box.addWidget(self.table, 1)
+        self.stack = QStackedWidget()
+        self.stack.setMinimumHeight(155)
+        self.stack.addWidget(self.table)
+        self.grid = ThumbnailGrid(self)
+        self.grid.markable = triage
+        self.stack.addWidget(self.grid)
+        box.addWidget(self.stack, 1)
+        self.page_bar = QWidget()
+        paging = QHBoxLayout(self.page_bar)
+        paging.setContentsMargins(0, 0, 0, 0)
+        self.previous_page = button(paging, "Previous page", lambda: self.turn_page(-1))
+        self.page_count = text_label()
+        paging.addWidget(self.page_count, 1)
+        self.next_page = button(paging, "Next page", lambda: self.turn_page(1))
+        box.addWidget(self.page_bar)
+        self.page_bar.hide()
+        self.view.currentIndexChanged.connect(self.change_view)
+        self.grid.chosen.connect(self.select_visible)
+        self.grid.marked.connect(self.mark)
         self.table.itemSelectionChanged.connect(self.selected)
         self.filter.textChanged.connect(self.filter_rows)
         self.availability.currentIndexChanged.connect(self.filter_rows)
         self.table.horizontalHeader().sortIndicatorChanged.connect(self.filter_rows)
+        from PySide6.QtGui import QKeySequence, QShortcut
+
+        for key, step in (("Alt+Left", -1), ("Alt+Right", 1)):
+            shortcut = QShortcut(QKeySequence(key), self)
+            shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            shortcut.activated.connect(lambda step=step: self.move(step))
+        if triage:
+            self.view.setCurrentIndex(1)
+
+    def change_view(self, index):
+        self.stack.setCurrentIndex(index)
+        self.page_bar.setVisible(bool(index) and len(self.visible_ids) > self.grid.page_size)
+        self.refresh_grid()
+
+    def refresh_grid(self):
+        if self.view.currentIndex() != 1:
+            return
+        size = self.grid.page_size
+        self.page_bar.setVisible(len(self.visible_ids) > size)
+        self.page = min(self.page, max(0, (len(self.visible_ids) - 1) // size))
+        ids = self.visible_ids[self.page * size : (self.page + 1) * size]
+        self.grid.fill(
+            [self.rows[cid] for cid in ids], self.candidate_id(), self.marked_ids, self.root
+        )
+        self.page_count.setText(
+            f"Page {self.page + 1} / {max(1, (len(self.visible_ids) + size - 1) // size)}"
+        )
+        self.previous_page.setEnabled(self.page > 0)
+        self.next_page.setEnabled((self.page + 1) * size < len(self.visible_ids))
+
+    def turn_page(self, step):
+        self.page = max(0, self.page + step)
+        self.refresh_grid()
+
+    def select_visible(self, cid):
+        if cid not in self.visible_ids:
+            return
+        for i in range(self.table.rowCount()):
+            if self.table.item(i, 0).data(Qt.ItemDataRole.UserRole) == cid:
+                self.table.selectRow(i)
+                self.table.scrollToItem(self.table.item(i, 0))
+                return
+
+    def move(self, step):
+        cid = self.candidate_id()
+        index = (
+            self.visible_ids.index(cid)
+            if cid in self.visible_ids
+            else (-1 if step > 0 else len(self.visible_ids))
+        )
+        index += step
+        if 0 <= index < len(self.visible_ids):
+            self.select_visible(self.visible_ids[index])
+
+    def mark(self, cid, checked):
+        row = self.rows.get(cid, {})
+        if (
+            checked
+            and cid in self.visible_ids
+            and row.get("displayable", row.get("available", False))
+        ):
+            self.marked_ids.add(cid)
+        else:
+            self.marked_ids.discard(cid)
+        self.marks_changed.emit()
+
+    def clear_marks(self):
+        self.marked_ids.clear()
+        self.refresh_grid()
+        self.marks_changed.emit()
 
     def clear_filters(self):
         self.filter.clear()
@@ -458,8 +584,13 @@ class CandidateBrowser(QWidget):
         self.min_width.setValue(0)
         self.min_height.setValue(0)
 
-    def populate(self, candidates):
+    def populate(self, candidates, root=None):
         prior = self.candidate_id()
+        if root != self.root:
+            self.marked_ids.clear()
+            self.grid.cache.clear()
+            self.page = 0
+        self.root = root
         self.rows = {r["candidate_id"]: r for r in candidates}
         values = {k: set() for k in self.selectors}
         for c in candidates:
@@ -470,12 +601,21 @@ class CandidateBrowser(QWidget):
             values["screening"].add(c.get("screening_text", "Not run"))
             if c.get("failure_kind"):
                 values["failure"].add(c["failure_kind"])
+            values["shared"].add(
+                "Multiple histories"
+                if c.get("shared_asset_candidates", 0) > 1
+                else "Single history or no acquired asset"
+            )
         for key, combo in self.selectors.items():
             selected = combo.currentData()
             label = combo.itemText(0)
             combo.blockSignals(True)
             combo.clear()
             combo.addItem(label, None)
+            if selected is not None:
+                values[key].add(
+                    selected
+                )  # Keep an active zero-match filter explicit after refresh.
             for value in sorted(values[key]):
                 combo.addItem(FAILURES[value][0] if key == "failure" else value, value)
             combo.setCurrentIndex(max(0, combo.findData(selected)))
@@ -494,13 +634,18 @@ class CandidateBrowser(QWidget):
                 c.get("availability", "Unavailable"),
                 str(c.get("width") or "?"),
                 str(c.get("height") or "?"),
+                str(i + 1),
             ]
             for j, text in enumerate(texts):
                 item = SortItem(text)
                 item.setData(Qt.ItemDataRole.UserRole, c["candidate_id"])
                 item.setData(
                     Qt.ItemDataRole.UserRole + 1,
-                    (c.get("width" if j == 6 else "height") or 0) if j >= 6 else text.casefold(),
+                    i
+                    if j == 8
+                    else (c.get("width" if j == 6 else "height") or 0)
+                    if j >= 6
+                    else text.casefold(),
                 )
                 item.setToolTip(text)
                 self.table.setItem(i, j, item)
@@ -518,6 +663,23 @@ class CandidateBrowser(QWidget):
 
     def selected(self):
         cid = self.candidate_id()
+        self.position.setText(
+            f"{self.visible_ids.index(cid) + 1:,} / {len(self.visible_ids):,}"
+            if cid in self.visible_ids
+            else "No image selected"
+        )
+        if cid in self.visible_ids:
+            self.page = self.visible_ids.index(cid) // self.grid.page_size
+            # Sync selection without rebuilding the page for each arrow key.
+            page_ids = [
+                self.grid.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.grid.count())
+            ]
+            if self.view.currentIndex() == 1 and cid in page_ids:
+                self.grid.blockSignals(True)
+                self.grid.setCurrentRow(page_ids.index(cid))
+                self.grid.blockSignals(False)
+            else:
+                self.refresh_grid()
         if cid:
             self.inspect.emit(cid)
         else:
@@ -542,6 +704,7 @@ class CandidateBrowser(QWidget):
         term = self.filter.text().casefold()
         facets = {k: v.currentData() for k, v in self.selectors.items()}
         visible = 0
+        self.visible_ids = []
         for i in range(self.table.rowCount()):
             item = self.table.item(i, 0)
             if item is None:
@@ -587,8 +750,16 @@ class CandidateBrowser(QWidget):
                 and (c.get("width") or 0) >= self.min_width.value()
                 and (c.get("height") or 0) >= self.min_height.value()
             )
+            shared = (
+                "Multiple histories"
+                if c.get("shared_asset_candidates", 0) > 1
+                else "Single history or no acquired asset"
+            )
+            match = match and (not facets["shared"] or facets["shared"] == shared)
             self.table.setRowHidden(i, not match)
             visible += bool(match)
+            if match:
+                self.visible_ids.append(c["candidate_id"])
             if not match and item.isSelected():
                 self.table.clearSelection()
         active = (
@@ -601,6 +772,31 @@ class CandidateBrowser(QWidget):
             f"{visible:,} visible / {len(self.rows):,} total · {active} extra filters\nView filters do not change review or freeze membership."
         )
         self.filters_toggle.setText(f"More filters ({active})" if active else "More filters")
+        labels = [v.currentText() for v in self.selectors.values() if v.currentData()]
+        if term:
+            labels.append(f"Text: {self.filter.text()}")
+        if self.min_width.value() or self.min_height.value():
+            labels.append(
+                f"Minimum {self.min_width.value()} × {self.min_height.value()} px (unknown excluded)"
+            )
+        self.counts.setText(
+            f"{visible:,} visible / {len(self.rows):,} total · {self.availability.currentText()}\n"
+            + (" · ".join(labels) if labels else "No additional filters")
+        )
+        self.counts.setToolTip(
+            self.counts.text() + "\nView filters never change review or freeze membership."
+        )
+        self.marked_ids.intersection_update(self.visible_ids)
+        self.marks_changed.emit()
+        cid = self.candidate_id()
+        self.position.setText(
+            f"{self.visible_ids.index(cid) + 1:,} / {visible:,}"
+            if cid in self.visible_ids
+            else "No image selected"
+        )
+        if cid in self.visible_ids:
+            self.page = self.visible_ids.index(cid) // self.grid.page_size
+        self.refresh_grid()
 
 
 def candidate_split(browser, inspector):

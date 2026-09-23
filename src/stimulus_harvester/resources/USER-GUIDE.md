@@ -105,6 +105,26 @@ backup. Reinstalling the application does not repair altered research evidence.
 This RC has bounded scripted keyboard, contrast and scale checks, not accessibility
 certification. Consult the verification report for the measured platform and limits.
 
+## Browsing and triage in the development curation milestone
+
+Review opens with available-image thumbnails. Switch to Table for columns and sorting.
+Use the sort selector or table headings, availability selector and More filters to narrow
+the view. Provider, search phrase and license constraints must match the same source
+record. Previous/next or Alt+Left/Alt+Right follow the filtered order. Source and License
+beside the enlarged image show recorded claims; Technical retains the raw evidence.
+
+Viewing or selecting an image never records a decision. Thumbnail checkboxes and Select
+mark a temporary batch; they do not create a collection. Marks survive page changes but
+are dropped when a filter hides them. Review selected previews the exact candidate list.
+Choose Maybe for further inspection or Reject, with investigator identity, then explicitly
+record the batch. Cancel leaves reviews unchanged; Clear selection removes the temporary
+marks. Later decisions supersede prior decisions while retaining their history. Other
+candidate histories of the same exact bytes are not automatically changed.
+
+Accept remains an individual review action. Advance is optional and initially off; when
+enabled, an explicit individual decision moves to the next image in the current order.
+Neither display filters nor temporary selections change frozen artifact membership.
+
 ## License
 
 Harvester: MIT, copyright 2026 Stimulus Harvester contributors. No institutional

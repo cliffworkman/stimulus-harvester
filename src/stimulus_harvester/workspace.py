@@ -292,6 +292,8 @@ def workspace(path):
 
 
 def inspect_candidate(path, candidate_id):
+    from stimulus_harvester.screening.engine import report_from_connection
+
     project = services.open_project(Path(path), validate_config=False)
     conn = init_db(project.paths.db_path)
     try:
@@ -332,9 +334,9 @@ def inspect_candidate(path, candidate_id):
         ).fetchone()
         evidence["near_duplicate"] = dict(image)
         evidence["image"] = dict(image)
+        report = report_from_connection(conn, project, candidate_id=candidate_id)
     finally:
         conn.close()
-    report = services.screening_report(project)
     evidence["screening"] = {
         key: [r for r in report[key] if r["candidate_id"] == candidate_id]
         for key in ("candidates", "observations", "evaluations", "overrides")

@@ -24,11 +24,16 @@ def evaluate(rule: RuleConfig, observation: dict):
     )
 
 
-def candidate_rows(conn):
+def candidate_rows(conn, candidate_id=None):
     return [
         dict(r)
-        for r in conn.execute("""SELECT c.*,i.file_path,i.image_url FROM candidates c
-        JOIN images i ON i.local_id=c.primary_local_id ORDER BY c.candidate_id""")
+        for r in conn.execute(
+            """SELECT c.*,i.file_path,i.image_url FROM candidates c
+        JOIN images i ON i.local_id=c.primary_local_id"""
+            + (" WHERE c.candidate_id=?" if candidate_id is not None else "")
+            + " ORDER BY c.candidate_id",
+            (candidate_id,) if candidate_id is not None else (),
+        )
     ]
 
 
@@ -262,15 +267,17 @@ def run_screen(project, *, screening_config=None, reuse_raw=False):
         conn.close()
 
 
-def report_from_connection(conn, project, *, include_history=True):
+def report_from_connection(conn, project, *, include_history=True, candidate_id=None):
     policies = records(conn, "screening_policies")
     policy = policies[-1] if policies else None
     required = [r["id"] for r in policy["config"]["rules"]] if policy else []
-    evaluations = records(conn, "screening_evaluations")
-    overrides = records(conn, "screening_overrides")
-    observations = records(conn, "observations")
+    where = "WHERE candidate_id=?" if candidate_id is not None else ""
+    params = (candidate_id,) if candidate_id is not None else ()
+    evaluations = records(conn, "screening_evaluations", where, params)
+    overrides = records(conn, "screening_overrides", where, params)
+    observations = records(conn, "observations", where, params)
     output = []
-    for candidate in candidate_rows(conn):
+    for candidate in candidate_rows(conn, candidate_id):
         cid, aid = candidate["candidate_id"], candidate["asset_id"]
         selected = {
             e["rule_id"]: e

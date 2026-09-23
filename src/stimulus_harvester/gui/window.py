@@ -35,6 +35,8 @@ class Window(QMainWindow):
         self.system_style = QApplication.instance().style().objectName()
         self.dependencies = {}
         self.inspect_target = None
+        self.requested_inspection = None
+        self.running_inspection = None
         self.artifact_target = None
         self.pending_freeze_request = None
         self.followup = None
@@ -44,6 +46,8 @@ class Window(QMainWindow):
         box = QVBoxLayout(central)
         self.context = text_label("No project open — start with Project.")
         self.warning = text_label("No production person-detector default is selected.")
+        self.context.setMaximumHeight(38)
+        self.warning.setMaximumHeight(30)
         box.addWidget(self.context)
         box.addWidget(self.warning)
         self.tabs = QTabWidget()
@@ -62,6 +66,8 @@ class Window(QMainWindow):
             self.assemble,
             self.export,
         ]
+        for page in (self.discover, self.screen, self.review):
+            page.browser.cleared.connect(lambda page=page: self.clear_inspection(page.inspector))
         for title, page in zip(
             (
                 "1  Project",
@@ -141,14 +147,48 @@ class Window(QMainWindow):
         return self.session.submit(action, payload, path=path)
 
     def configure_then(self, action, configuration, *, payload=None):
+        if self.session.busy:
+            self.notice("Wait for the current operation before saving configuration.")
+            return
         self.followup = (action, payload or {})
         self.submit("configure", {"configuration": configuration})
 
     def inspect(self, target, candidate_id):
-        if self.session.busy:
+        if self.session.busy and self.active_action != "inspect":
             return
+        target.clear()
+        target.identity.setText("Loading selected image…")
+        self.requested_inspection = (target, candidate_id)
+        if self.session.busy:
+            return  # Coalesce rapid movement to the latest selection, never an unbounded queue.
         self.inspect_target = target
+        self.running_inspection = (target, candidate_id)
         self.submit("inspect", {"candidate_id": candidate_id})
+
+    def clear_inspection(self, target):
+        if self.requested_inspection and self.requested_inspection[0] is target:
+            self.requested_inspection = None
+
+    def finish_inspection(self, reply):
+        requested = self.requested_inspection
+        if requested and requested == self.running_inspection:
+            target, cid = requested
+            browser = next(
+                p.browser
+                for p in (self.discover, self.screen, self.review)
+                if p.inspector is target
+            )
+            if browser.candidate_id() == cid:
+                if reply.issue:
+                    target.identity.setText("Preview unavailable. " + reply.issue.message)
+                elif reply.status != "cancelled":
+                    target.display(reply.value)
+                    if target is self.review.inspector:
+                        self.review.notes.setText(reply.value["evidence"]["review"]["notes"] or "")
+            self.requested_inspection = None
+            self.notice("Image ready" if not reply.issue else "Image preview needs attention")
+        elif requested:
+            self.inspect(*requested)
 
     def inspect_artifact(self, target, artifact_id):
         self.artifact_target = target
@@ -196,18 +236,22 @@ class Window(QMainWindow):
                 page.manifest.clear()
             self.review.notes.clear()
         self.displayed_project = state.project_id
-        self.context.setText(state.name + "\n" + summary_text(state.status["curation"]["summary"]))
+        full_context = state.name + "\n" + summary_text(state.status["curation"]["summary"])
+        self.context.setText("\n".join(full_context.splitlines()[:2]))
+        self.context.setToolTip(full_context)
         self.warning.setText(
             "\n".join(state.warnings)
             or "Current project is mutable. Frozen artifacts are read-only. Screening is optional; no default detector is selected."
         )
+        self.warning.setToolTip(self.warning.text())
         for page in self.pages:
             page.populate(state)
 
     @Slot(bool)
     def busy_changed(self, busy):
+        viewing = busy and self.active_action == "inspect"
         for i, page in enumerate(self.pages):
-            page.setEnabled(not busy and (i == 0 or self.session.state is not None))
+            page.setEnabled((not busy or viewing) and (i == 0 or self.session.state is not None))
         self.cancel.setEnabled(busy)
         self.progress.setRange(0, 0 if busy else 1)
         if not busy:
@@ -240,6 +284,9 @@ class Window(QMainWindow):
 
     @Slot(object)
     def completed(self, reply):
+        if reply.action == "inspect":
+            self.finish_inspection(reply)
+            return
         if reply.issue:
             self.followup = None
             if (
@@ -286,11 +333,6 @@ class Window(QMainWindow):
             self.screen.refresh_capability()
         elif reply.action in {"create", "demo", "open"} and not self.dependencies:
             self.submit("dependencies")
-        elif reply.action == "inspect":
-            if self.inspect_target:
-                self.inspect_target.display(reply.value)
-                if self.inspect_target is self.review.inspector:
-                    self.review.notes.setText(reply.value["evidence"]["review"]["notes"] or "")
         elif reply.action == "validate":
             self.review.freeze.receive_validation(reply.value, self.pending_freeze_request)
             if not reply.value["valid"]:
@@ -300,9 +342,14 @@ class Window(QMainWindow):
         elif reply.action == "artifact":
             if self.artifact_target:
                 self.artifact_target.display(reply.value)
-        elif reply.action in {"review", "screen-override"}:
-            if self.review.inspector.current:
-                self.inspect(self.review.inspector, self.review.inspector.current["candidate_id"])
+        elif reply.action in {"review", "review-batch", "screen-override"}:
+            if reply.action == "review-batch":
+                self.review.browser.clear_marks()
+            next_id, self.review.next_after_review = self.review.next_after_review, None
+            if reply.action == "review" and next_id in self.review.browser.visible_ids:
+                self.review.browser.select_visible(next_id)
+            elif self.review.browser.candidate_id():
+                self.inspect(self.review.inspector, self.review.browser.candidate_id())
         elif reply.action == "configure" and self.followup:
             action, payload = self.followup
             self.followup = None
@@ -374,4 +421,6 @@ class Window(QMainWindow):
             )
             event.ignore()
         else:
+            for page in (self.discover, self.screen, self.review):
+                page.browser.grid.shutdown()
             event.accept()
