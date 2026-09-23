@@ -879,9 +879,12 @@ class FreezePanel(QWidget):
         self.validation = report
         self.validated_request = copy.deepcopy(request) if report["valid"] else None
         self.create_button.setEnabled(report["valid"])
+        decisions = " · ".join(
+            f"{name.capitalize()}: {count}" for name, count in report["summary"]["reviews"].items()
+        )
         self.summary.setText(
             f"{'Ready for confirmation' if report['valid'] else 'Blocked'} · {report['scope_count']} candidates · {report['assembled_asset_count']} proposed assets\n"
-            f"Decisions: {report['summary']['reviews']} · {len(report['blockers'])} blockers · {len(report['warnings'])} warnings\nDouble-click a candidate blocker or duplicate history to review it."
+            f"{decisions} · {report['summary']['screening_exclusions']} screening exclusions · {len(report['blockers'])} blockers\nDouble-click a candidate blocker or duplicate history to review it."
         )
         self.blockers.clear()
         for record in report["blockers"] + report["warnings"]:
@@ -969,7 +972,18 @@ class FreezePanel(QWidget):
         if not self.validated_request or not self.validation:
             self.window.notice("Validate the current freeze request first.")
             return
-        summary = json.dumps(self.validation["summary"], indent=2, ensure_ascii=False)
+        values = self.validation["summary"]
+        scope_name = self.window.session.state.status.get("collection", {}).get(
+            "name", "Project review"
+        )
+        decisions = " · ".join(
+            f"{name.capitalize()}: {count}" for name, count in values["reviews"].items()
+        )
+        summary = (
+            f"{scope_name}\n{values['scope_size']} candidates · {self.validation['assembled_asset_count']} output images\n"
+            f"{decisions}\n{values['effective_overrides']} screening overrides · {len(values['duplicate_adjudications'])} duplicate adjudications\n"
+            f"Investigator: {values['investigator']}"
+        )
         if self.window.confirm(
             "Create immutable freeze?",
             summary

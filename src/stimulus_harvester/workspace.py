@@ -207,6 +207,7 @@ def workspace(path, collection_id=None):
     screening = services.screening_report(project)
     if (
         configuration
+        and not collection_id
         and screening["policy"]
         and screening["policy"]["config"] != configuration["screening"]
     ):

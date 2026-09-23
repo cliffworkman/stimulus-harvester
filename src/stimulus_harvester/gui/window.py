@@ -401,6 +401,16 @@ class Window(QMainWindow):
             if self.artifact_target:
                 self.artifact_target.display(reply.value)
         elif reply.action in {"review", "review-batch", "screen-override", "collection"}:
+            if (
+                reply.action == "collection"
+                and isinstance(reply.value.get("result"), dict)
+                and reply.value["result"].get("action") == "create"
+            ):
+                show_json(self.log, reply.value)
+                self.collections.selector.setCurrentIndex(
+                    self.collections.selector.findData(reply.value["collection_id"])
+                )
+                return
             if reply.action in {"review-batch", "collection"}:
                 self.review.browser.clear_marks()
             next_id, self.review.next_after_review = self.review.next_after_review, None

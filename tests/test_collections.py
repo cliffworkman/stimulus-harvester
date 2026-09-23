@@ -156,6 +156,8 @@ def test_changed_asset_invalidates_without_erasing_review(project):
 
 
 def test_shared_observation_different_scoped_policy_and_override(project):
+    from stimulus_harvester import workspace
+
     item = seed(project, "shared")
     a, b = make(project), make(project, "B")
     assign(project, a, item)
@@ -165,6 +167,10 @@ def test_shared_observation_different_scoped_policy_and_override(project):
     alternate["rules"][0]["outcomes"]["detected"] = "review_required"
     action(project, "policy", collection_id=a, configuration=strict_policy())
     action(project, "policy", collection_id=b, configuration=alternate)
+    assert any("configuration differs" in w for w in workspace.workspace(project.root).warnings)
+    assert not any(
+        "configuration differs" in w for w in workspace.workspace(project.root, a).warnings
+    )
     conn = init_db(project.paths.db_path)
     ra = col.screening_report(conn, project, a)["candidates"][0]
     rb = col.screening_report(conn, project, b)["candidates"][0]

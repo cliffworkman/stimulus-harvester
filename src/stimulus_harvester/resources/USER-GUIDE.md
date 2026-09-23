@@ -1,4 +1,4 @@
-# Stimulus Harvester 0.2.0rc5
+# Stimulus Harvester 0.2.0rc6
 
 Research stimulus discovery & adjudication. Release candidate for evaluation;
 no production person detector has been selected.
@@ -19,6 +19,17 @@ working copy and sync/backup only when operations are idle; never have two progr
 writing to the same project at once.
 
 ## The six stages
+
+The collection selector applies to Discover, Screen and Review/freeze. Use
+**Collections… → Create** to name a research set and save several search phrases.
+Enter your investigator identity in the shared field. **Add selected images to…**
+adds existing results without copying image files. Each new membership starts
+Unreviewed: Accept in one collection does not accept the image in another.
+**All results** retains the separate project review. Removing and re-adding a
+membership requires a fresh review; rename and archive/restore preserve it.
+In a collection, freeze validation covers all active members, including unresolved
+or unavailable results, regardless of view filters. See `docs/collections.md` for
+screening, history and compatibility details.
 
 1. **Project:** create an empty project folder or open an existing one. Reopen by
    browsing to the same folder. The synthetic demo contains invented images and

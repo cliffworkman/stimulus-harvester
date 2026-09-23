@@ -110,6 +110,9 @@ class CollectionBar(QWidget):
         if not new and current is None:
             self.window.notice("Select a collection to edit.")
             return
+        if not new and current["archived"]:
+            self.window.notice("Restore this archived collection before editing it.")
+            return
         dialog = QDialog(self)
         dialog.setWindowTitle("Create collection" if new else "Edit collection")
         box = QVBoxLayout(dialog)
@@ -130,6 +133,15 @@ class CollectionBar(QWidget):
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
         )
+
+        def ready():
+            buttons.button(QDialogButtonBox.StandardButton.Save).setEnabled(
+                bool(name.text().strip() and actor.text().strip())
+            )
+
+        name.textChanged.connect(ready)
+        actor.textChanged.connect(ready)
+        ready()
         buttons.accepted.connect(dialog.accept)
         buttons.rejected.connect(dialog.reject)
         box.addWidget(buttons)

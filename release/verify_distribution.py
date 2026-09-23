@@ -103,7 +103,7 @@ if ($launcher.ExitCode -ne 0) {throw 'GUI launcher failed'}
     with zipfile.ZipFile(portable) as archive:archive.extractall(unpack)
     portable_root=next(unpack.iterdir())
     portable_python=portable_root/'runtime/python.exe'
-    result=subprocess.run([str(portable_python),'-I','-B','-c',"import stimulus_harvester;from PySide6.QtWidgets import QApplication;from stimulus_harvester.gui.window import Window;a=QApplication([]);w=Window();assert w.tabs.count()==6;assert stimulus_harvester.__version__=='0.2.0rc5';print('portable passed')"],env=environment,cwd=args.sandbox,capture_output=True,text=True,timeout=45)
+    result=subprocess.run([str(portable_python),'-I','-B','-c',"import stimulus_harvester;from PySide6.QtWidgets import QApplication;from stimulus_harvester.gui.window import Window;a=QApplication([]);w=Window();assert w.tabs.count()==6;assert stimulus_harvester.__version__=='0.2.0rc6';print('portable passed')"],env=environment,cwd=args.sandbox,capture_output=True,text=True,timeout=45)
     assert result.returncode==0,result.stderr
     passed('portable ZIP unpack and independent native GUI construction',sha256=sha(portable))
     project_root=args.evidence/'installed-workflow'

@@ -303,7 +303,12 @@ class Inspector(QWidget):
                     QTreeWidgetItem(
                         [
                             membership["name"] + (" (archived)" if membership["archived"] else ""),
-                            membership["review"]["label"],
+                            {
+                                "unrated": "Unreviewed",
+                                "accepted": "Accepted",
+                                "maybe": "Maybe",
+                                "rejected": "Rejected",
+                            }[membership["review"]["label"]],
                         ]
                     )
                 )
