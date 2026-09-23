@@ -11,14 +11,27 @@ import json
 import os
 from collections import Counter
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 from PIL import Image
 
 from stimulus_harvester import __version__, services
 from stimulus_harvester.config import HarvesterConfig, config_to_yaml_str
+from stimulus_harvester.curation import project_projection
 from stimulus_harvester.review.db import init_db
 from stimulus_harvester.storage import ACTIVE_OPERATION, candidate_evidence, new_id
+
+
+@lru_cache(maxsize=4096)
+def _displayable(path, size, modified_ns):
+    """Worker-side decode check cached by file metadata; no pixel copies retained."""
+    try:
+        with Image.open(path) as image:
+            image.load()
+        return True
+    except (OSError, ValueError):
+        return False
 
 
 @dataclass(frozen=True)
@@ -214,11 +227,27 @@ def workspace(path):
     by_id = {c["candidate_id"]: c for c in screening["candidates"]}
     conn = init_db(project.paths.db_path)
     try:
+        curation = project_projection(conn, project.root)
+        status["curation"] = {k: v for k, v in curation.items() if k != "rows"}
+        human_rows = {r["candidate_id"]: r for r in curation["rows"]}
         candidates = []
         for row in conn.execute(
             "SELECT c.*,i.width,i.height,i.download_status,i.file_path,r.label,r.notes,r.reviewer_email FROM candidates c JOIN images i ON i.local_id=c.primary_local_id LEFT JOIN reviews r ON r.local_id=c.primary_local_id ORDER BY c.rowid"
         ):
             candidate = dict(row)
+            candidate.update(human_rows[row["candidate_id"]])
+            candidate["displayable"] = candidate["available"]
+            if candidate["available"]:
+                try:
+                    path = project.resolve(candidate["file_path"])
+                    stat = path.stat()
+                    candidate["displayable"] = _displayable(
+                        str(path), stat.st_size, stat.st_mtime_ns
+                    )
+                except (OSError, ValueError):
+                    candidate["displayable"] = False
+                if not candidate["displayable"]:
+                    candidate["availability"] = "Unreadable local file"
             candidate["sources"] = [
                 dict(r)
                 for r in conn.execute(
@@ -231,6 +260,12 @@ def workspace(path):
         counts = Counter(c["asset_id"] for c in candidates if c["asset_id"])
         for c in candidates:
             c["shared_asset_candidates"] = counts[c["asset_id"]] if c["asset_id"] else 0
+        summary = status["curation"]["summary"]
+        unreadable = sum(c["available"] and not c["displayable"] for c in candidates)
+        summary["unreadable_local"] = unreadable
+        summary["available"] -= unreadable
+        summary["unavailable"] += unreadable
+        summary["unique_images"] = len({c["asset_id"] for c in candidates if c["displayable"]})
     finally:
         conn.close()
     artifacts = services.list_frozen_artifacts(project)
@@ -283,10 +318,20 @@ def inspect_candidate(path, candidate_id):
                 (row[1],),
             )
         ]
+        for shared in evidence["shared_candidates"]:
+            shared["sources"] = [
+                dict(r)
+                for r in conn.execute(
+                    "SELECT * FROM discoveries WHERE candidate_id=? ORDER BY rowid",
+                    (shared["candidate_id"],),
+                )
+            ]
         image = conn.execute(
-            "SELECT file_path,duplicate_of_local_id,phash FROM images WHERE local_id=?", (local,)
+            "SELECT title,image_url,width,height,download_status,file_path,file_size_bytes,duplicate_of_local_id,phash FROM images WHERE local_id=?",
+            (local,),
         ).fetchone()
         evidence["near_duplicate"] = dict(image)
+        evidence["image"] = dict(image)
     finally:
         conn.close()
     report = services.screening_report(project)
@@ -311,7 +356,7 @@ def inspect_candidate(path, candidate_id):
 def freeze_preparation(path, request):
     """Validated backend summary for a human confirmation, not GUI-derived inclusion."""
     from stimulus_harvester.frozen.snapshot import snapshot
-    from stimulus_harvester.frozen.store import ensure_schema, sha, canonical
+    from stimulus_harvester.frozen.store import canonical, ensure_schema, sha
     from stimulus_harvester.storage import project_lock
 
     project = services.open_project(Path(path))
@@ -349,7 +394,7 @@ def freeze_preparation(path, request):
 
 def create_desktop_fixture(path):
     """CP5 fixture at the unresolved review boundary; no actual model or network."""
-    from stimulus_harvester.frozen.demo import config, seed, screen
+    from stimulus_harvester.frozen.demo import config, screen, seed
 
     project = services.create_project(Path(path), config())
     a = seed(project, "accepted", label="accepted")

@@ -76,6 +76,11 @@ class CommonsAdapter(PagedAdapter):
             offset += len(items)
             next_token = payload.get("continue")
             if not next_token:
+                self.emit(
+                    "query_exhausted",
+                    reason="results_exhausted",
+                    message="Available search results exhausted",
+                )
                 return
             if not isinstance(next_token, dict) or not all(
                 key in {"continue", "gsroffset", "iicontinue"} and isinstance(value, (str, int))
@@ -99,6 +104,11 @@ class CommonsAdapter(PagedAdapter):
                 )
                 return
             continuation = next_token
+        self.emit(
+            "query_completed",
+            reason="configured_page_limit",
+            message="Stopped at your configured search limit; more results may remain",
+        )
 
     def _normalize(self, item, *, query, seed_query, raw_path):
         info_list = item.get("imageinfo")

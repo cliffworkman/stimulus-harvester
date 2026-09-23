@@ -480,7 +480,9 @@ def test_advanced_blank_detector_remains_strictly_rejected(qtbot, window, projec
     window.project.configuration.setPlainText(json.dumps(value))
     window.project.save_advanced()
     settle(qtbot, window)
-    assert "ValidationError" in window.operation.text()
+    assert "validation errors" in window.operation.text()
+    assert "ValidationError" in window.log.toPlainText()
+    assert not window.details_toggle.isChecked()
     assert project.paths.config_snapshot_path.read_bytes() == before
 
 
@@ -735,24 +737,25 @@ def test_gui_download_recovery_uses_service_and_preserves_no_default(qtbot, wind
         search_query='q', seed_query='q', image_url=url, landing_page_url=url), project.root.name)
     conn.close()
     open_window(qtbot, window, project)
-    assert '1 pending (not attempted)' in window.discover.acquisition_summary.text()
+    assert '1 waiting to download' in window.discover.acquisition_summary.text()
     assert not window.discover.retry_button.isEnabled()
     with respx.mock:
         route = respx.get(url).mock(return_value=httpx.Response(403, text='Forbidden'))
         window.discover.download_pending()
         settle(qtbot, window)
-        assert '1 failed downloads' in window.discover.acquisition_summary.text()
-        assert '0 pending' in window.discover.acquisition_summary.text()
+        assert '1 unavailable' in window.discover.acquisition_summary.text()
+        assert 'Access denied / request setup: 1' in window.discover.query_preview.toPlainText()
+        assert '0 waiting to download' in window.discover.acquisition_summary.text()
         assert window.discover.retry_button.isEnabled()
         assert not window.details_toggle.isChecked()
-        assert 'Retry failed downloads' in window.operation.text()
+        assert 'Coverage & failures' in window.operation.text()
         out = io.BytesIO()
         Image.new('RGB', (40,30), 'navy').save(out, format='PNG')
         route.mock(return_value=httpx.Response(200, content=out.getvalue(), headers={'Content-Type':'image/png'}))
         window.discover.retry_failed()
         settle(qtbot, window)
-        assert '1 unique image files available now' in window.discover.acquisition_summary.text()
-        assert '0 failed downloads' in window.discover.acquisition_summary.text()
+        assert '1 available' in window.discover.acquisition_summary.text()
+        assert '0 unavailable' in window.discover.acquisition_summary.text()
         assert not window.discover.retry_button.isEnabled()
         assert route.call_count == 2
     conn = init_db(project.paths.db_path)
@@ -779,15 +782,15 @@ def test_download_contact_save_preserves_pending_queries_and_screen(qtbot, windo
     from stimulus_harvester.review.db import init_db, upsert_image_from_search
     conn=init_db(project.paths.db_path)
     upsert_image_from_search(conn,SearchResult(local_id='commons',source_backend='commons',
-        search_query='old',seed_query='old',image_url='https://images.org/a.png',landing_page_url='https://images.org/a'),project.root.name)
+        search_query='old',seed_query='old',image_url='https://upload.wikimedia.org/a.png',landing_page_url='https://images.org/a'),project.root.name)
     conn.close()
     open_window(qtbot,window,project)
     window.discover.seeds.setPlainText('unsaved church\n研究')
     window.discover.contact.setText('https://example.org/contact')
     calls=[]
-    monkeypatch.setattr(window,'configure_then',lambda action,configuration:calls.append((action,configuration)))
-    window.discover.retry_failed()
-    assert calls[0][0]=='retry-downloads'
+    monkeypatch.setattr(window,'configure_then',lambda action,configuration,**kwargs:calls.append((action,configuration)))
+    window.discover.download_pending()
+    assert calls[0][0]=='download'
     assert calls[0][1]['search']['seed_queries']==['unsaved church','研究']
     assert calls[0][1]['search']['commons']['contact']=='https://example.org/contact'
     assert calls[0][1]['screening']['detectors']==[]

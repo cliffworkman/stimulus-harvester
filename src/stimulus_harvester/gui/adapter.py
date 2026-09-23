@@ -184,7 +184,13 @@ class Adapter:
                         status,
                         value,
                         self._refresh(project_path),
-                        classify(message, details, action=action),
+                        classify(
+                            str(
+                                (outcome.error or {}).get("message", "Operation failed")
+                            ).splitlines()[0],
+                            details,
+                            action=action,
+                        ),
                     )
             state = backend.workspace(project_path)
             return Reply(action, status, value, state)

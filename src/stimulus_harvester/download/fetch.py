@@ -17,6 +17,7 @@ import httpx
 
 from stimulus_harvester.config import DownloadConfig
 from stimulus_harvester.download.integrity import probe_image, sha256_of_file
+from stimulus_harvester.download.policy import identified_stream
 from stimulus_harvester.models import DownloadRecord, DownloadStatus, utcnow
 from stimulus_harvester.storage import new_id
 
@@ -130,9 +131,8 @@ def download_one(client, local_id, image_url, dest_dir, config, *, context=None,
         attempts.append(entry)
         last_status = None
         try:
-            with client.stream(
-                "GET", image_url, timeout=config.timeout_seconds, headers={"User-Agent": agent}
-            ) as response:
+            with identified_stream(client, image_url, config, context, entry) as response:
+                evidence["request_user_agent"] = entry["request_hosts"][0]["user_agent"]
                 last_status = response.status_code
                 entry["http_status"] = last_status
                 # Restrict headers, bound lengths, and omit cookies/auth/location data.
@@ -184,6 +184,8 @@ def download_one(client, local_id, image_url, dest_dir, config, *, context=None,
                     **evidence,
                 )
         except (httpx.HTTPError, OSError, ValueError) as exc:
+            if entry.get("request_hosts"):
+                evidence["request_user_agent"] = entry["request_hosts"][0]["user_agent"]
             if temporary is not None:
                 temporary.unlink(missing_ok=True)
             # HTTP exceptions may echo credential-bearing URLs; do not retain their text.

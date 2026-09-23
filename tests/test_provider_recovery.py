@@ -300,7 +300,7 @@ def test_provider_and_query_must_match_same_source(project):
 
 @respx.mock
 def test_commons_contact_and_source_ids_reach_acquisition_after_shared_url(project):
-    a = add(project, "a", "openverse")
+    a = add(project, "a", "openverse", url="https://upload.wikimedia.org/a.png")
     add(project, "alias", "commons", url=a[1])
     route = respx.get(a[1]).mock(return_value=response())
     result = services.run_stage(project, "download")

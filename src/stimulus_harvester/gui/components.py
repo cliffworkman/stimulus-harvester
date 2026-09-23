@@ -2,25 +2,40 @@
 
 import json
 
-from PySide6.QtCore import Qt, QRectF, Signal
-from PySide6.QtGui import QImage, QPainter, QPen, QColor
+from PySide6.QtCore import QRectF, Qt, QUrl, Signal
+from PySide6.QtGui import QColor, QDesktopServices, QImage, QPainter, QPen
 from PySide6.QtWidgets import (
-    QWidget,
-    QLabel,
-    QVBoxLayout,
+    QAbstractItemView,
+    QApplication,
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QGridLayout,
     QHBoxLayout,
+    QHeaderView,
+    QLabel,
     QLineEdit,
-    QPushButton,
     QPlainTextEdit,
+    QPushButton,
+    QScrollArea,
+    QSpinBox,
+    QSplitter,
     QTableWidget,
     QTableWidgetItem,
-    QHeaderView,
-    QAbstractItemView,
-    QSplitter,
-    QComboBox,
-    QCheckBox,
+    QTabWidget,
     QTreeWidget,
     QTreeWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
+
+from stimulus_harvester.curation import (
+    FAILURES,
+    plain_metadata,
+    review_history_text,
+    safe_link,
+    screening_label,
+    title_for,
 )
 
 
@@ -50,13 +65,22 @@ def show_json(widget, value):
     widget.setPlainText(json.dumps(value, indent=2, ensure_ascii=False, default=str))
 
 
+def scroll_panel(widget):
+    """Keep a long inactive settings tab from imposing its height on image review."""
+    scroll = QScrollArea()
+    scroll.setWidgetResizable(True)
+    scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+    scroll.setWidget(widget)
+    return scroll
+
+
 class ImageOverlay(QWidget):
     def __init__(self):
         super().__init__()
         self.image = QImage()
         self.observation = None
         self.show_boxes = False
-        self.setMinimumSize(240, 180)
+        self.setMinimumSize(200, 120)
         self.setAccessibleName("Candidate preview with optional saved detection boxes")
 
     def set_image(self, content):
@@ -106,85 +130,181 @@ class ImageOverlay(QWidget):
 class Inspector(QWidget):
     def __init__(self):
         super().__init__()
+        self.setMinimumWidth(200)
         self.current = None
         box = QVBoxLayout(self)
-        self.identity = text_label("Select a candidate to inspect its image and evidence.")
+        box.setContentsMargins(0, 0, 0, 0)
+        self.identity = text_label("Select an image to see its source and history.")
+        self.identity.setMaximumHeight(55)
         box.addWidget(self.identity)
         self.image = ImageOverlay()
-        box.addWidget(self.image, 2)
-        row = QHBoxLayout()
-        self.observations = QComboBox()
-        self.observations.setAccessibleName("Saved observation to inspect")
-        self.boxes = QCheckBox("Show saved person boxes (display overlay)")
-        row.addWidget(self.observations, 1)
-        row.addWidget(self.boxes)
-        box.addLayout(row)
-        self.observation_summary = text_label()
-        box.addWidget(self.observation_summary)
+        box.addWidget(self.image, 3)
+        self.tabs = QTabWidget()
+        self.tabs.setUsesScrollButtons(True)
+        self.tabs.setMinimumSize(180, 110)
+        box.addWidget(self.tabs, 2)
         self.sources = QTreeWidget()
-        self.sources.setHeaderLabels(["Source / relationship", "Claim / value"])
-        self.sources.setMinimumHeight(130)
-        self.sources.header().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-        box.addWidget(self.sources, 1)
-        toggle = QCheckBox("Advanced evidence and complete review history")
-        box.addWidget(toggle)
+        self.sources.setHeaderLabels(["Found through / source", "Reported value"])
+        self.sources.setColumnWidth(0, 145)
+        self.sources.setColumnWidth(1, 300)
+        self.sources.itemActivated.connect(self.open_source)
+        self.sources.setAccessibleName(
+            "Source evidence. Activate a source link with Enter or double click"
+        )
+        self.tabs.addTab(self.sources, "Source")
+        self.licenses = details()
+        self.tabs.addTab(self.licenses, "License")
+        screening = QWidget()
+        layout = QVBoxLayout(screening)
+        self.observation_summary = text_label()
+        layout.addWidget(self.observation_summary)
+        self.rule_summary = text_label()
+        layout.addWidget(self.rule_summary)
+        self.observations = QComboBox()
+        self.observations.setAccessibleName("Saved screening result to inspect")
+        layout.addWidget(self.observations)
+        self.boxes = QCheckBox("Show saved detection boxes")
+        layout.addWidget(self.boxes)
+        layout.addStretch()
+        self.tabs.addTab(scroll_panel(screening), "Screening")
+        self.history = details()
+        self.tabs.addTab(self.history, "Review history")
+        technical = QWidget()
+        layout = QVBoxLayout(technical)
         self.evidence = details()
-        self.evidence.hide()
-        box.addWidget(self.evidence, 1)
-        toggle.toggled.connect(self.evidence.setVisible)
+        layout.addWidget(self.evidence)
+        button(
+            layout,
+            "Copy raw evidence",
+            lambda: QApplication.clipboard().setText(self.evidence.toPlainText()),
+        )
+        self.tabs.addTab(scroll_panel(technical), "Technical")
         self.observations.currentIndexChanged.connect(self.observation_changed)
         self.boxes.toggled.connect(self.overlay_changed)
+
+    def clear(self):
+        self.current = None
+        self.identity.setText("Select an image to see its source and history.")
+        self.image.set_image(b"")
+        self.sources.clear()
+        self.licenses.clear()
+        self.history.clear()
+        self.evidence.clear()
+        self.observations.clear()
+        self.rule_summary.clear()
+        self.image.observation = None
+
+    def open_source(self, item, column):
+        url = item.data(1, Qt.ItemDataRole.UserRole)
+        if safe_link(url):
+            QDesktopServices.openUrl(QUrl(url))
 
     def display(self, value):
         self.current = value
         evidence = value["evidence"]
-        self.identity.setText(
-            f"{evidence['primary_local_id']} · {value['candidate_id']}\nAsset: {evidence['asset_id'] or 'not acquired'}"
+        img = evidence.get("image", {})
+        review = evidence.get("review", {})
+        observations = evidence["screening"]["observations"]
+        latest = {o["source"]: o for o in observations if o["asset_id"] == evidence["asset_id"]}
+        current_obs = list(latest.values())
+        name = title_for(dict(img, sources=evidence["sources"]))
+        decision = {"accepted": "Accepted", "maybe": "Maybe", "rejected": "Rejected"}.get(
+            review.get("label"), "Unreviewed"
         )
+        self.identity.setText(
+            f"{name[:140]}\n{img.get('width') or '?'} × {img.get('height') or '?'} · {'Available' if value['preview'] else 'Unavailable'} · {decision}\nScreening: {screening_label(current_obs)}"
+        )
+        self.identity.setToolTip(name)
         self.image.set_image(value["preview"])
         self.sources.clear()
+        claims = []
         for source in evidence["sources"]:
-            root = QTreeWidgetItem([source["provider"], source["source_id"]])
-            for key in (
-                "query",
-                "creator",
-                "license",
-                "license_url",
-                "source_page_url",
-                "image_url",
+            root = QTreeWidgetItem(
+                [source["provider"], source.get("query") or "Search phrase not supplied"]
+            )
+            for key, label in (
+                ("creator", "Creator"),
+                ("source_page_url", "Source page (open)"),
+                ("license", "License claim"),
+                ("license_url", "License link (open)"),
+                ("image_url", "Media URL (open)"),
             ):
-                root.addChild(
-                    QTreeWidgetItem([key.replace("_", " "), str(source.get(key) or "Not supplied")])
-                )
+                raw = source.get(key)
+                text = plain_metadata(raw) if key == "creator" else str(raw or "Not supplied")
+                child = QTreeWidgetItem([label, text])
+                child.setToolTip(1, text)
+                if key.endswith("url") and safe_link(raw):
+                    child.setData(1, Qt.ItemDataRole.UserRole, raw)
+                root.addChild(child)
             self.sources.addTopLevelItem(root)
+            root.setExpanded(True)
+            claims.append(
+                f"{source['provider']} · {source.get('query') or 'Search phrase not supplied'}\nExact claim: {source.get('license') or 'Not supplied'}\nLink: {source.get('license_url') or 'Not supplied'}"
+            )
+        other_sources = [
+            source for other in evidence["shared_candidates"]
+            if other["candidate_id"] != value["candidate_id"]
+            for source in other.get("sources", [])
+        ]
+        for source in other_sources:
+            claims.append(
+                f"Other exact-byte history — {source['provider']} · {source.get('query') or 'Search phrase not supplied'}\n"
+                f"Exact claim: {source.get('license') or 'Not supplied'}\nLink: {source.get('license_url') or 'Not supplied'}"
+            )
+        exact = {s.get("license") for s in evidence["sources"] + other_sources}
+        warning = (
+            "Multiple differing claims: they may conflict. None has been chosen as authoritative.\n\n"
+            if len(exact - {None, ""}) > 1
+            else ""
+        )
+        if None in exact or "" in exact:
+            warning += "Some sources did not supply a license claim.\n\n"
+        self.licenses.setPlainText(
+            warning
+            + "Source claims are unverified; they do not establish permission.\n\n"
+            + "\n\n".join(claims)
+        )
+        others = [
+            c for c in evidence["shared_candidates"] if c["candidate_id"] != value["candidate_id"]
+        ]
         group = QTreeWidgetItem(
-            ["Shared exact asset", f"{len(evidence['shared_candidates'])} candidate histories"]
+            ["Same image found elsewhere", f"{len(others)} other exact-byte histories"]
         )
-        for c in evidence["shared_candidates"]:
-            group.addChild(QTreeWidgetItem([c["primary_local_id"], c["label"] or "unrated"]))
+        for other in others:
+            for source in other.get("sources", []):
+                group.addChild(
+                    QTreeWidgetItem(
+                        [
+                            source["provider"],
+                            f"{source.get('query') or 'No phrase'} · {source.get('license') or 'License not supplied'} · {source.get('source_page_url') or 'Source page not supplied'}",
+                        ]
+                    )
+                )
         self.sources.addTopLevelItem(group)
-        self.sources.addTopLevelItem(
-            QTreeWidgetItem(
-                [
-                    "Near duplicate (informational)",
-                    str(evidence["near_duplicate"].get("duplicate_of_local_id") or "None recorded"),
-                ]
+        group.setExpanded(True)
+        self.history.setPlainText(review_history_text(review, evidence["review_events"]))
+        candidates = evidence["screening"]["candidates"]
+        if candidates:
+            result = candidates[0]
+            labels = {
+                "review_required": "Needs human review",
+                "excluded": "Excluded by screening",
+                "eligible": "Eligible under screening rules",
+            }
+            text = "Rule result: " + labels[result["rule_disposition"]] + "\n" + result["reason"]
+            override = result.get("override")
+            text += "\nInvestigator override: " + (
+                labels[override["new_disposition"]] + " — " + override.get("note", "")
+                if override
+                else "None"
             )
-        )
-        self.sources.addTopLevelItem(
-            QTreeWidgetItem(
-                [
-                    "Review history",
-                    f"{len(evidence['review_events'])} append-only events (advanced evidence)",
-                ]
-            )
-        )
+            self.rule_summary.setText(text)
         self.observations.blockSignals(True)
         self.observations.clear()
-        self.observations.addItem("No observation overlay", None)
-        for obs in reversed(evidence["screening"]["observations"]):
+        self.observations.addItem("No saved result selected", None)
+        for obs in reversed(observations):
             self.observations.addItem(
-                f"{obs['source']} · {obs['status']} · {obs['timestamp']}", obs
+                f"{obs['status'].replace('_', ' ')} · {obs['timestamp']}", obs
             )
         self.observations.setCurrentIndex(1 if self.observations.count() > 1 else 0)
         self.observations.blockSignals(False)
@@ -193,23 +313,20 @@ class Inspector(QWidget):
 
     def observation_changed(self):
         obs = self.observations.currentData()
-        matching_asset = bool(
+        matching = bool(
             obs and self.current and obs["asset_id"] == self.current["evidence"]["asset_id"]
         )
-        self.image.observation = obs if matching_asset else None
+        self.image.observation = obs if matching else None
         if obs:
-            self.observation_summary.setText(
-                f"{obs['status']} · score {obs['score']} · thresholds {obs['thresholds']}\nModel: {obs['model_identity']}\nnot_detected ≠ confirmed absence; rules determine disposition."
+            text = (
+                screening_label([obs])
+                + "\nSaved machine result; not a human review decision. Not detected does not establish absence. Rules and investigator overrides remain separate."
             )
-            if not matching_asset:
-                self.observation_summary.setText(
-                    self.observation_summary.text()
-                    + "\nHistorical observation for another asset: overlay disabled."
-                )
+            if not matching:
+                text += "\nHistorical observation for another asset: overlay disabled."
         else:
-            self.observation_summary.setText(
-                "No saved observation selected. No model inference is run by this viewer."
-            )
+            text = "No saved result selected. This viewer does not run screening."
+        self.observation_summary.setText(text)
         self.image.update()
 
     def overlay_changed(self, checked):
@@ -217,103 +334,280 @@ class Inspector(QWidget):
         self.image.update()
 
 
+class SortItem(QTableWidgetItem):
+    def __lt__(self, other):
+        return (self.data(Qt.ItemDataRole.UserRole + 1), self.data(Qt.ItemDataRole.UserRole)) < (
+            other.data(Qt.ItemDataRole.UserRole + 1),
+            other.data(Qt.ItemDataRole.UserRole),
+        )
+
+
 class CandidateBrowser(QWidget):
     inspect = Signal(str)
+    cleared = Signal()
 
-    def __init__(self):
+    def __init__(self, available_only=False):
         super().__init__()
+        self.setMinimumWidth(200)
+        self.rows = {}
         box = QVBoxLayout(self)
-        self.filter = QLineEdit()
-        self.filter.setPlaceholderText(
-            "Find candidate, provider, query, decision or license claim…"
+        box.setContentsMargins(0, 0, 0, 0)
+        top = QHBoxLayout()
+        self.availability = QComboBox()
+        self.availability.addItems(
+            [
+                "All results",
+                "Available images",
+                "Unavailable results",
+                "Failed downloads",
+                "Pending downloads",
+            ]
         )
-        self.filter.setAccessibleName("Filter candidates")
+        self.availability.setCurrentIndex(1 if available_only else 0)
+        self.availability.setAccessibleName("Image availability filter")
+        top.addWidget(self.availability, 1)
+        self.filters_toggle = QCheckBox("More filters")
+        top.addWidget(self.filters_toggle)
+        box.addLayout(top)
+        self.facets = QWidget()
+        form = QGridLayout(self.facets)
+        form.setContentsMargins(0, 0, 0, 0)
+        self.selectors = {}
+        for i, (key, label) in enumerate(
+            (
+                ("provider", "Provider"),
+                ("query", "Search phrase"),
+                ("review", "Human review"),
+                ("screening", "Screening"),
+                ("license", "Exact license claim"),
+                ("failure", "Failure reason"),
+            )
+        ):
+            combo = QComboBox()
+            combo.setMinimumWidth(0)
+            combo.setSizeAdjustPolicy(
+                QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+            )
+            combo.setAccessibleName(label + " filter")
+            combo.addItem("All " + label.lower(), None)
+            self.selectors[key] = combo
+            form.addWidget(combo, i // 2, i % 2)
+            combo.currentIndexChanged.connect(self.filter_rows)
+        self.min_width, self.min_height = QSpinBox(), QSpinBox()
+        for i, (spin, label) in enumerate(
+            ((self.min_width, "Min width: "), (self.min_height, "Min height: "))
+        ):
+            spin.setRange(0, 100000)
+            spin.setPrefix(label)
+            spin.setAccessibleName(label + "pixels")
+            spin.valueChanged.connect(self.filter_rows)
+            form.addWidget(spin, 3, i)
+        self.filter_dialog = QDialog(self)
+        self.filter_dialog.setWindowTitle("Filter this view")
+        filters_layout = QVBoxLayout(self.filter_dialog)
+        filters_layout.addWidget(
+            text_label(
+                "Provider, phrase and license must match the same source record. These filters only change this view."
+            )
+        )
+        filters_layout.addWidget(self.facets)
+        button(filters_layout, "Clear additional filters", self.clear_filters)
+        button(filters_layout, "Done", self.filter_dialog.accept)
+        self.filter_dialog.finished.connect(lambda _: self.filters_toggle.setChecked(False))
+        self.filters_toggle.toggled.connect(self.filter_dialog.setVisible)
+        self.filter_dialog.resize(440, 300)
+        self.filter = QLineEdit()
+        self.filter.setPlaceholderText("Find title or source text…")
+        self.filter.setAccessibleName("Find images")
         box.addWidget(self.filter)
-        self.table = QTableWidget(0, 7)
+        self.counts = text_label()
+        self.counts.setMaximumHeight(48)
+        box.addWidget(self.counts)
+        self.table = QTableWidget(0, 8)
         self.table.setHorizontalHeaderLabels(
             [
-                "Candidate",
-                "Review",
+                "Image",
+                "Human review",
                 "Screening",
-                "Providers / queries",
-                "Source license claims",
-                "Acquisition / size",
-                "Shared asset",
+                "Found through",
+                "Exact license claims",
+                "Availability",
+                "Width",
+                "Height",
             ]
         )
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.setSortingEnabled(True)
+        self.table.sortByColumn(0, Qt.SortOrder.AscendingOrder)
+        self.table.setMinimumHeight(100)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        self.table.horizontalHeader().setStretchLastSection(True)
-        for column, width in enumerate((145, 100, 145, 235, 180, 175, 100)):
-            self.table.setColumnWidth(column, width)
-        self.table.setMinimumHeight(150)
+        for i, width in enumerate((175, 100, 130, 200, 170, 105, 65, 65)):
+            self.table.setColumnWidth(i, width)
         box.addWidget(self.table, 1)
         self.table.itemSelectionChanged.connect(self.selected)
         self.filter.textChanged.connect(self.filter_rows)
+        self.availability.currentIndexChanged.connect(self.filter_rows)
+        self.table.horizontalHeader().sortIndicatorChanged.connect(self.filter_rows)
+
+    def clear_filters(self):
+        self.filter.clear()
+        for combo in self.selectors.values():
+            combo.setCurrentIndex(0)
+        self.min_width.setValue(0)
+        self.min_height.setValue(0)
 
     def populate(self, candidates):
         prior = self.candidate_id()
+        self.rows = {r["candidate_id"]: r for r in candidates}
+        values = {k: set() for k in self.selectors}
+        for c in candidates:
+            for source in c["sources"]:
+                for key in ("provider", "query", "license"):
+                    values[key].add(source.get(key) or "Not supplied")
+            values["review"].add(c.get("review_text", "Unreviewed"))
+            values["screening"].add(c.get("screening_text", "Not run"))
+            if c.get("failure_kind"):
+                values["failure"].add(c["failure_kind"])
+        for key, combo in self.selectors.items():
+            selected = combo.currentData()
+            label = combo.itemText(0)
+            combo.blockSignals(True)
+            combo.clear()
+            combo.addItem(label, None)
+            for value in sorted(values[key]):
+                combo.addItem(FAILURES[value][0] if key == "failure" else value, value)
+            combo.setCurrentIndex(max(0, combo.findData(selected)))
+            combo.blockSignals(False)
         self.table.blockSignals(True)
+        self.table.setSortingEnabled(False)
         self.table.setRowCount(len(candidates))
-        for i, candidate in enumerate(candidates):
-            sources = candidate["sources"]
-            values = [
-                candidate["primary_local_id"],
-                candidate["label"] or "unrated",
-                candidate["screening"]["effective_disposition"],
-                "; ".join(sorted({str(s["provider"]) + ": " + str(s["query"]) for s in sources})),
-                "; ".join(sorted({str(s["license"] or "unknown") for s in sources})),
-                f"{candidate['download_status'] or 'not acquired'} · {candidate['width'] or '?'}×{candidate['height'] or '?'}",
-                str(candidate["shared_asset_candidates"]),
+        for i, c in enumerate(candidates):
+            sources = c["sources"]
+            texts = [
+                c.get("title") or title_for(c),
+                c.get("review_text", "Unreviewed"),
+                c.get("screening_text", "Not run"),
+                "; ".join(sorted({f"{s['provider']}: {s['query']}" for s in sources})),
+                "; ".join(sorted({s.get("license") or "Not supplied" for s in sources})),
+                c.get("availability", "Unavailable"),
+                str(c.get("width") or "?"),
+                str(c.get("height") or "?"),
             ]
-            for j, text in enumerate(values):
-                item = QTableWidgetItem(text)
-                item.setData(Qt.ItemDataRole.UserRole, candidate["candidate_id"])
-                item.setToolTip(candidate["candidate_id"] + "\n" + text)
+            for j, text in enumerate(texts):
+                item = SortItem(text)
+                item.setData(Qt.ItemDataRole.UserRole, c["candidate_id"])
+                item.setData(
+                    Qt.ItemDataRole.UserRole + 1,
+                    (c.get("width" if j == 6 else "height") or 0) if j >= 6 else text.casefold(),
+                )
+                item.setToolTip(text)
                 self.table.setItem(i, j, item)
-            if candidate["candidate_id"] == prior:
-                self.table.selectRow(i)
+        self.table.setSortingEnabled(True)
+        if prior:
+            for i in range(self.table.rowCount()):
+                if self.table.item(i, 0).data(Qt.ItemDataRole.UserRole) == prior:
+                    self.table.selectRow(i)
         self.table.blockSignals(False)
         self.filter_rows()
 
     def candidate_id(self):
-        row = self.table.currentRow()
-        return (
-            self.table.item(row, 0).data(Qt.ItemDataRole.UserRole)
-            if row >= 0 and self.table.item(row, 0)
-            else None
-        )
+        items = self.table.selectedItems()
+        return items[0].data(Qt.ItemDataRole.UserRole) if items else None
 
     def selected(self):
         cid = self.candidate_id()
         if cid:
             self.inspect.emit(cid)
+        else:
+            self.cleared.emit()
 
     def select_candidate(self, candidate_id):
         self.filter.clear()
+        for combo in self.selectors.values():
+            combo.setCurrentIndex(0)
+        self.min_width.setValue(0)
+        self.min_height.setValue(0)
+        self.availability.setCurrentIndex(
+            0
+        )  # Explicit blocker navigation may reveal unavailable records.
         for i in range(self.table.rowCount()):
             if self.table.item(i, 0).data(Qt.ItemDataRole.UserRole) == candidate_id:
                 self.table.selectRow(i)
                 self.table.scrollToItem(self.table.item(i, 0))
                 return
 
-    def filter_rows(self):
+    def filter_rows(self, *args):
         term = self.filter.text().casefold()
+        facets = {k: v.currentData() for k, v in self.selectors.items()}
+        visible = 0
         for i in range(self.table.rowCount()):
-            self.table.setRowHidden(
-                i,
-                not any(
+            item = self.table.item(i, 0)
+            if item is None:
+                continue
+            c = self.rows[item.data(Qt.ItemDataRole.UserRole)]
+            available = c.get("displayable", c.get("available", False))
+            mode = self.availability.currentIndex()
+            match = (
+                mode == 0
+                or mode == 1
+                and available
+                or mode == 2
+                and not available
+                or mode == 3
+                and c.get("download_status") == "failed"
+                or mode == 4
+                and c.get("download_status") is None
+            )
+            match = match and (
+                not term
+                or any(
                     term in self.table.item(i, j).text().casefold()
                     for j in range(self.table.columnCount())
-                ),
+                )
             )
+            # Provider/query/license constraints match one source relationship, not a fictitious combined claim.
+            if any(facets[k] for k in ("provider", "query", "license")):
+                match = match and any(
+                    all(
+                        not facets[k] or (s.get(k) or "Not supplied") == facets[k]
+                        for k in ("provider", "query", "license")
+                    )
+                    for s in c["sources"]
+                )
+            for key, field in (
+                ("review", "review_text"),
+                ("screening", "screening_text"),
+                ("failure", "failure_kind"),
+            ):
+                match = match and (not facets[key] or c.get(field) == facets[key])
+            match = (
+                match
+                and (c.get("width") or 0) >= self.min_width.value()
+                and (c.get("height") or 0) >= self.min_height.value()
+            )
+            self.table.setRowHidden(i, not match)
+            visible += bool(match)
+            if not match and item.isSelected():
+                self.table.clearSelection()
+        active = (
+            sum(bool(v) for v in facets.values())
+            + bool(term)
+            + bool(self.min_width.value())
+            + bool(self.min_height.value())
+        )
+        self.counts.setText(
+            f"{visible:,} visible / {len(self.rows):,} total · {active} extra filters\nView filters do not change review or freeze membership."
+        )
+        self.filters_toggle.setText(f"More filters ({active})" if active else "More filters")
 
 
 def candidate_split(browser, inspector):
-    splitter = QSplitter(Qt.Orientation.Vertical)
+    splitter = QSplitter(Qt.Orientation.Horizontal)
+    splitter.setChildrenCollapsible(False)
     splitter.addWidget(browser)
     splitter.addWidget(inspector)
-    splitter.setSizes([220, 440])
+    browser.cleared.connect(inspector.clear)
+    splitter.setSizes([360, 470])
     return splitter

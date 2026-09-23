@@ -2,20 +2,22 @@
 
 from PySide6.QtCore import QTimer, Slot
 from PySide6.QtWidgets import (
-    QMainWindow,
-    QWidget,
-    QVBoxLayout,
-    QHBoxLayout,
-    QTabWidget,
-    QScrollArea,
-    QProgressBar,
-    QCheckBox,
-    QMessageBox,
     QApplication,
+    QCheckBox,
+    QHBoxLayout,
+    QMainWindow,
+    QMessageBox,
+    QProgressBar,
+    QScrollArea,
+    QTabWidget,
+    QVBoxLayout,
+    QWidget,
 )
 
-from .components import text_label, button, details, show_json
-from .pages import ProjectPage, DiscoverPage, ScreenPage, ReviewPage, ArtifactPage
+from stimulus_harvester.curation import summary_text
+
+from .components import button, details, show_json, text_label
+from .pages import ArtifactPage, DiscoverPage, ProjectPage, ReviewPage, ScreenPage
 from .tasks import Session
 
 
@@ -40,12 +42,6 @@ class Window(QMainWindow):
         central = QWidget()
         self.setCentralWidget(central)
         box = QVBoxLayout(central)
-        heading = text_label("Stimulus Harvester")
-        heading.setStyleSheet("font-size:24px;font-weight:600")
-        box.addWidget(heading)
-        box.addWidget(
-            text_label("Research stimulus discovery & adjudication · Stimulus Modernization Suite")
-        )
         self.context = text_label("No project open — start with Project.")
         self.warning = text_label("No production person-detector default is selected.")
         box.addWidget(self.context)
@@ -77,6 +73,11 @@ class Window(QMainWindow):
             ),
             self.pages,
         ):
+            if page in (self.discover, self.screen, self.review):
+                # Each long settings tab scrolls internally; the image workspace
+                # receives the viewport height so common actions remain visible.
+                self.tabs.addTab(page, title)
+                continue
             scroll = QScrollArea()
             scroll.setWidgetResizable(True)
             scroll.setWidget(page)
@@ -95,6 +96,7 @@ class Window(QMainWindow):
         )
         box.addLayout(bottom)
         self.progress = QProgressBar()
+        self.progress.setMaximumHeight(12)
         self.progress.setRange(0, 1)
         self.progress.setValue(0)
         box.addWidget(self.progress)
@@ -105,8 +107,15 @@ class Window(QMainWindow):
         self.log.hide()
         self.details_toggle.toggled.connect(self.log.setVisible)
         box.addWidget(self.log)
+        self.copy_diagnostics = button(
+            box,
+            "Copy diagnostic report",
+            lambda: QApplication.clipboard().setText(self.log.toPlainText()),
+        )
+        self.copy_diagnostics.hide()
+        self.details_toggle.toggled.connect(self.copy_diagnostics.setVisible)
         self.setStyleSheet(
-            "QWidget{font-size:13px} QPushButton{padding:6px 10px} QLineEdit,QComboBox,QSpinBox{padding:4px} QTabBar::tab{padding:9px 12px} QGroupBox{margin-top:9px;padding-top:12px}"
+            "QWidget{font-size:13px} QPushButton{padding:6px 10px} QLineEdit,QComboBox,QSpinBox{padding:4px} QTabBar::tab{padding:6px 8px} QGroupBox{margin-top:9px;padding-top:12px}"
         )
         self.session.changed.connect(self.populate)
         self.session.busy_changed.connect(self.busy_changed)
@@ -131,8 +140,8 @@ class Window(QMainWindow):
         )
         return self.session.submit(action, payload, path=path)
 
-    def configure_then(self, action, configuration):
-        self.followup = (action, {})
+    def configure_then(self, action, configuration, *, payload=None):
+        self.followup = (action, payload or {})
         self.submit("configure", {"configuration": configuration})
 
     def inspect(self, target, candidate_id):
@@ -181,25 +190,16 @@ class Window(QMainWindow):
                 self.screen.inspector,
                 self.review.inspector,
             ):
-                inspector.current = None
-                inspector.identity.setText(
-                    "Select a candidate in this project to inspect its evidence."
-                )
-                inspector.observations.clear()
-                inspector.image.set_image(b"")
-                inspector.evidence.clear()
-                inspector.sources.clear()
+                inspector.clear()
             for page in (self.assemble, self.export):
                 page.current_artifact = None
                 page.manifest.clear()
             self.review.notes.clear()
         self.displayed_project = state.project_id
-        self.context.setText(
-            f"Current project: {state.name} · {state.path}\n{state.project_id} · {state.status['counts']['candidates']} candidates · decisions {state.status['reviews']} · {len(state.artifacts)} immutable artifacts"
-        )
+        self.context.setText(state.name + "\n" + summary_text(state.status["curation"]["summary"]))
         self.warning.setText(
             "\n".join(state.warnings)
-            or "Current project is mutable. Frozen artifacts are read-only. No default detector is selected."
+            or "Current project is mutable. Frozen artifacts are read-only. Screening is optional; no default detector is selected."
         )
         for page in self.pages:
             page.populate(state)
@@ -242,15 +242,21 @@ class Window(QMainWindow):
     def completed(self, reply):
         if reply.issue:
             self.followup = None
-            if reply.action in {"search", "download", "retry-downloads"} and reply.value is not None:
+            if (
+                reply.action in {"search", "download", "retry-downloads"}
+                and reply.value is not None
+            ):
                 self.log.setPlainText(reply.issue.details)
                 self.discover.report(reply.action, reply.value, reply.status)
-                self.notice("Search needs attention; see the provider explanation." if reply.action == "search"
-                            else "Downloads failed. Use Retry failed downloads without repeating the search; see the counts above.")
+                self.notice(
+                    "Search needs attention; see the provider explanation."
+                    if reply.action == "search"
+                    else "Downloads need attention. See Coverage & failures for causes and eligible retries."
+                )
                 return
             self.notice(f"{reply.issue.category}: {reply.issue.message}\n{reply.issue.guidance}")
             self.log.setPlainText(reply.issue.details)
-            self.details_toggle.setChecked(True)
+            self.details_toggle.setChecked(False)
             if reply.action == "search":
                 self.discover.discovery_summary.setText(
                     reply.issue.guidance + "\n" + reply.issue.message
@@ -263,8 +269,14 @@ class Window(QMainWindow):
             self.notice("Cancelled before the stage started. No running operation was hidden.")
             return
         self.notice(
-            f"{reply.action}: " + ("Some downloads failed — use Retry failed downloads" if reply.status == "partial" and reply.action in {"download", "retry-downloads"}
-                                    else "Partial discovery — inspect provider/query failures" if reply.status == "partial" else "completed")
+            f"{reply.action}: "
+            + (
+                "Some downloads failed — see Coverage & failures for next steps"
+                if reply.status == "partial" and reply.action in {"download", "retry-downloads"}
+                else "Partial discovery — inspect provider/query failures"
+                if reply.status == "partial"
+                else "completed"
+            )
         )
         if reply.action == "dependencies":
             self.dependencies = reply.value
@@ -311,16 +323,23 @@ class Window(QMainWindow):
             self.inspect_artifact(target, result["artifact_id"])
         if reply.action not in {"inspect", "artifact"}:
             show_json(self.log, reply.value)
-        if reply.action in {"preview_queries", "diagnostics", "search", "download", "retry-downloads"}:
+        if reply.action in {
+            "preview_queries",
+            "diagnostics",
+            "search",
+            "download",
+            "retry-downloads",
+        }:
             self.discover.report(reply.action, reply.value, reply.status)
             if reply.action in {"preview_queries", "diagnostics"}:
-                self.details_toggle.setChecked(True)
+                self.details_toggle.setChecked(False)
 
     def show_about(self):
         from stimulus_harvester import __version__
 
         QMessageBox.about(
-            self, "About Stimulus Harvester",
+            self,
+            "About Stimulus Harvester",
             f"Stimulus Harvester {__version__}\nResearch stimulus discovery & adjudication\n"
             "MIT · Stimulus Harvester contributors\nNo production detector default.\n"
             "Third-party license inventory accompanies the distribution.",
@@ -328,7 +347,8 @@ class Window(QMainWindow):
 
     def show_guide(self):
         from importlib.resources import files
-        from PySide6.QtWidgets import QDialog, QTextBrowser, QDialogButtonBox
+
+        from PySide6.QtWidgets import QDialog, QDialogButtonBox, QTextBrowser
 
         dialog = QDialog(self)
         dialog.setWindowTitle("Stimulus Harvester user guide")
@@ -336,7 +356,11 @@ class Window(QMainWindow):
         box = QVBoxLayout(dialog)
         browser = QTextBrowser()
         browser.setOpenExternalLinks(False)
-        browser.setMarkdown(files("stimulus_harvester").joinpath("resources/USER-GUIDE.md").read_text(encoding="utf-8"))
+        browser.setMarkdown(
+            files("stimulus_harvester")
+            .joinpath("resources/USER-GUIDE.md")
+            .read_text(encoding="utf-8")
+        )
         box.addWidget(browser)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         buttons.rejected.connect(dialog.reject)

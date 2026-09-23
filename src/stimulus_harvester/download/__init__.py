@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from stimulus_harvester.download.fetch import download_all
+from stimulus_harvester.download.policy import request_agent
 from stimulus_harvester.download.state import select_downloads
 from stimulus_harvester.logging_utils import get_logger
 from stimulus_harvester.paths import RunPaths, load_run_config
@@ -44,19 +45,19 @@ def run_download_stage(
 
     contexts = {}
     try:
-        for local_id, _ in candidates:
+        for local_id, url in candidates:
             sources = conn.execute(
                 "SELECT d.source_id,d.provider FROM discoveries d JOIN candidates c USING(candidate_id) WHERE c.primary_local_id=?",
                 (local_id,),
             ).fetchall()
             providers = sorted({r["provider"] for r in sources})
-            agent = config.download.user_agent
-            if "commons" in providers:
-                from stimulus_harvester.search.commons import commons_user_agent
-
-                agent = commons_user_agent(config.search.commons.contact)
+            # Preflight every initial destination before launching any jobs.
+            agent = request_agent(url, config.download.user_agent, config.search.commons.contact)
             contexts[local_id] = dict(
-                providers=providers, source_ids=[r["source_id"] for r in sources], user_agent=agent
+                providers=providers,
+                source_ids=[r["source_id"] for r in sources],
+                user_agent=agent,
+                commons_contact=config.search.commons.contact,
             )
         records = download_all(
             candidates, paths.images_original, config.download, contexts=contexts

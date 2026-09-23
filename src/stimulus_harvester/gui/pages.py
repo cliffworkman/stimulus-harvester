@@ -28,9 +28,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from stimulus_harvester.search.http import http_url
+from stimulus_harvester.curation import coverage_text, failure_text, summary_text
+from stimulus_harvester.download.policy import wikimedia_host
 from stimulus_harvester.screening.config import DetectorConfig
-from stimulus_harvester.download.state import format_acquisition_summary
+from stimulus_harvester.search.http import http_url
 from stimulus_harvester.search.presentation import discovery_text, issue_message
 
 from .components import (
@@ -39,6 +40,7 @@ from .components import (
     button,
     candidate_split,
     details,
+    scroll_panel,
     show_json,
     text_label,
 )
@@ -93,7 +95,7 @@ class ProjectPage(Page):
         self.tabs = QTabWidget()
         self.status = details()
         self.recovery = details()
-        self.tabs.addTab(self.status, "Project details")
+        self.tabs.addTab(self.status, "Status & search coverage")
         self.tabs.addTab(self.recovery, "Recovery guidance")
         advanced = QWidget()
         layout = QVBoxLayout(advanced)
@@ -106,6 +108,8 @@ class ProjectPage(Page):
         layout.addWidget(self.configuration)
         button(layout, "Validate & save advanced configuration", self.save_advanced)
         self.tabs.addTab(advanced, "Advanced settings")
+        self.technical_status = details()
+        self.tabs.addTab(self.technical_status, "Technical project evidence")
         self.box.addWidget(self.tabs, 1)
         self.loaded_config = None
 
@@ -139,30 +143,23 @@ class ProjectPage(Page):
     def populate(self, state):
         self.path.setText(state.path)
         self.name.setText(state.name)
-        counts, reviews = state.status["counts"], state.status["reviews"]
-        self.summary.setText(
-            f"{state.project_id} · schema {state.status['schema_version']} · software {state.version}\n"
-            f"{counts['candidates']} candidates · {counts['assets']} assets · {counts['discoveries']} source records\n"
-            f"Current decisions: {reviews} · {len(state.artifacts)} immutable artifacts"
-        )
+        human = state.status["curation"]
         show_json(
-            self.status,
+            self.technical_status,
             {
                 "status": state.status,
                 "providers": state.providers,
-                "configured_screening": (state.config or {}).get("screening"),
                 "artifacts": state.artifacts,
+                "recovery": state.recovery,
             },
         )
-        show_json(
-            self.recovery,
-            state.recovery
-            or [
-                {
-                    "state": "No recovery entries detected",
-                    "guidance": "No automatic deletion or orphan adoption is performed.",
-                }
-            ],
+        self.summary.setText(summary_text(human["summary"]))
+        self.status.setPlainText(
+            failure_text(human["summary"]) + "\n\n" + coverage_text(human["coverage"])
+        )
+        self.recovery.setPlainText(
+            "\n\n".join(r["guidance"] for r in state.recovery)
+            or "No recovery entries detected. No automatic deletion or orphan adoption is performed."
         )
         if state.config != self.loaded_config:
             show_json(self.configuration, state.config)
@@ -184,13 +181,17 @@ class ProviderSetupDialog(QDialog):
     def __init__(self, parent, key, value):
         super().__init__(parent)
         self.key = key
-        self.setWindowTitle("Configure SearXNG" if key == "searxng" else "Configure Wikimedia Commons")
+        self.setWindowTitle(
+            "Configure SearXNG" if key == "searxng" else "Configure Wikimedia Commons"
+        )
         layout = QVBoxLayout(self)
-        layout.addWidget(text_label(
-            "SearXNG needs a search endpoint from an instance you operate or have permission to use."
-            if key == "searxng" else
-            "Wikimedia Commons requires an operator contact in requests. Enter your email or project URL."
-        ))
+        layout.addWidget(
+            text_label(
+                "SearXNG needs a search endpoint from an instance you operate or have permission to use."
+                if key == "searxng"
+                else "Wikimedia Commons requires an operator contact in requests. Enter your email or project URL."
+            )
+        )
         self.value = QLineEdit(value)
         self.value.setAccessibleName("SearXNG endpoint" if key == "searxng" else "Commons contact")
         form = QFormLayout()
@@ -222,7 +223,7 @@ class DiscoverPage(Page):
     def __init__(self, window):
         super().__init__(
             window,
-            "Discover candidates, inspect all source claims, then acquire the original images. Provider failures are reported separately from zero results.",
+            "Find images and download originals. Source claims and failed downloads remain available for inspection.",
         )
         self.config = None
         self.provider_setup_dialog = None
@@ -230,7 +231,7 @@ class DiscoverPage(Page):
         self.box.addWidget(self.views, 1)
         setup = QWidget()
         setup_box = QVBoxLayout(setup)
-        self.views.addTab(setup, "Queries & providers")
+        self.views.addTab(scroll_panel(setup), "Queries & providers")
         controls = QGroupBox("Search settings")
         form = QFormLayout(controls)
         self.seeds = QPlainTextEdit()
@@ -268,10 +269,12 @@ class DiscoverPage(Page):
             self.providers[key].clicked.connect(
                 lambda checked, key=key: self.configure_provider(key) if checked else None
             )
-        form.addRow(text_label(
-            "Enable SearXNG or Commons to configure it. Unconfigured providers stay unchecked. "
-            "Changes are saved with Start a new search. Download actions also save needed Commons contact settings."
-        ))
+        form.addRow(
+            text_label(
+                "Enable SearXNG or Commons to configure it. Unconfigured providers stay unchecked. "
+                "Changes are saved with Start a new search. Download actions also save needed Commons contact settings."
+            )
+        )
         expansion = QHBoxLayout()
         self.expand = QCheckBox("Deterministic query expansion")
         self.query_limit = QSpinBox()
@@ -298,7 +301,7 @@ class DiscoverPage(Page):
             self.discover,
         )
         self.download_button = button(actions, "Download pending images", self.download_pending)
-        self.retry_button = button(actions, "Retry failed downloads", self.retry_failed)
+        self.retry_button = button(actions, "Retry eligible failures", self.retry_failed)
         button(actions, "Coverage & failures", lambda: self.submit("diagnostics"))
         form.addRow(actions)
         setup_box.addWidget(controls)
@@ -306,6 +309,8 @@ class DiscoverPage(Page):
         setup_box.addWidget(self.provider_status)
         self.acquisition_summary = text_label()
         self.box.insertWidget(1, self.acquisition_summary)
+        # The persistent window summary already shows these counts on every page.
+        self.acquisition_summary.hide()
         self.discovery_summary = text_label(
             "Preview setup before discovery. Detailed requests and overlap evidence remain available in diagnostics."
         )
@@ -314,9 +319,9 @@ class DiscoverPage(Page):
         self.browser = CandidateBrowser()
         self.inspector = Inspector()
         self.browser.inspect.connect(lambda cid: window.inspect(self.inspector, cid))
-        self.views.addTab(candidate_split(self.browser, self.inspector), "Candidates & sources")
+        self.views.addTab(candidate_split(self.browser, self.inspector), "Images & sources")
         self.query_preview = details()
-        self.views.addTab(self.query_preview, "Query / coverage report")
+        self.views.addTab(self.query_preview, "Coverage & failures")
 
     def download_pending(self):
         self.download_action("download")
@@ -327,20 +332,34 @@ class DiscoverPage(Page):
     def download_action(self, action):
         if self.provider_setup_dialog is not None:
             return
-        # Downloads may use existing Commons sources even if Commons discovery is
-        # now unchecked. Save Discover settings, preserving unrelated saved Screen settings.
         state = self.window.session.state
-        has_commons = any(s['provider'] == 'commons' for c in state.candidates for s in c['sources'])
-        if has_commons:
-            if not self.configure_provider('commons'):
+        payload = (
+            {"candidate_ids": state.status["curation"]["summary"]["retry_ids"]}
+            if action == "retry-downloads"
+            else {}
+        )
+        selected = [
+            c
+            for c in state.candidates
+            if (
+                c["candidate_id"] in payload["candidate_ids"]
+                if payload
+                else c["download_status"] is None
+            )
+        ]
+        if any(wikimedia_host(c.get("image_url", "")) for c in selected):
+            previously_enabled = self.providers["commons"].isChecked()
+            accepted = self.configure_provider("commons")
+            self.providers["commons"].setChecked(previously_enabled)
+            if not accepted:
                 return
             contact = self.contact.text().strip()
-            if contact != self.config['search']['commons']['contact']:
+            if contact != self.config["search"]["commons"]["contact"]:
                 config = self.configuration()
-                config['search']['commons']['contact'] = contact
-                self.window.configure_then(action, config)
+                config["search"]["commons"]["contact"] = contact
+                self.window.configure_then(action, config, payload=payload)
                 return
-        self.submit(action)
+        self.submit(action, **payload)
 
     def configure_provider(self, key):
         if self.provider_setup_dialog is not None:
@@ -403,10 +422,14 @@ class DiscoverPage(Page):
 
     def populate(self, state):
         self.browser.populate(state.candidates)
-        counts = state.status['acquisition']
-        self.acquisition_summary.setText(format_acquisition_summary(counts))
-        self.download_button.setEnabled(counts['pending'] > counts['pending_deferred'])
-        self.retry_button.setEnabled(counts['retry_available'] > 0)
+        counts = state.status["acquisition"]
+        human = state.status["curation"]
+        self.acquisition_summary.setText(summary_text(human["summary"]))
+        self.query_preview.setPlainText(
+            failure_text(human["summary"]) + "\n\n" + coverage_text(human["coverage"])
+        )
+        self.download_button.setEnabled(counts["pending"] > counts["pending_deferred"])
+        self.retry_button.setEnabled(bool(human["summary"]["retry_ids"]))
         self.provider_status.setText(
             " · ".join(
                 f"{name}: {entry['state']} — {entry['message']}"
@@ -421,7 +444,9 @@ class DiscoverPage(Page):
             self.contact.setText(search["commons"]["contact"] or "")
             for key, check in self.providers.items():
                 value = self.endpoint.text() if key == "searxng" else self.contact.text()
-                check.setChecked(search[key]["enabled"] and not provider_configuration_error(key, value))
+                check.setChecked(
+                    search[key]["enabled"] and not provider_configuration_error(key, value)
+                )
                 pages, count = self.limits[key]
                 pages.setValue(search[key]["max_pages_per_query"])
                 count.setValue(
@@ -452,7 +477,7 @@ class DiscoverPage(Page):
             ]
             for provider, row in coverage["providers"].items():
                 lines.append(
-                    f"{provider}: {row['candidate_count']} candidates; {row['incremental_unique_urls']} incremental URLs; {row['incremental_unique_assets']} incremental acquired assets"
+                    f"{provider}: {row['candidate_count']} found results; {row['incremental_unique_urls']} incremental URLs; {row['incremental_unique_assets']} incremental acquired assets"
                 )
             lines += [
                 f"{' / '.join(r['providers'])}: {r['shared_urls']} shared URLs; {r['shared_exact_assets']} exact shared assets"
@@ -463,17 +488,32 @@ class DiscoverPage(Page):
                 for r in value["events"]
                 if r.get("status") in {"failed", "engine_errors"}
             ]
-            self.query_preview.setPlainText("\n".join(lines))
+            human = self.window.session.state.status["curation"]
+            self.query_preview.setPlainText(
+                failure_text(human["summary"])
+                + "\n\n"
+                + coverage_text(human["coverage"])
+                + "\n\n"
+                + "\n".join(lines)
+            )
             self.views.setCurrentIndex(2)
         elif action == "search":
             self.discovery_summary.setText(discovery_text(value, status))
-            self.query_preview.setPlainText(discovery_text(value, status))
+            human = self.window.session.state.status["curation"]
+            self.query_preview.setPlainText(
+                discovery_text(value, status)
+                + "\n\n"
+                + failure_text(human["summary"])
+                + "\n\n"
+                + coverage_text(human["coverage"])
+            )
             self.views.setCurrentIndex(2)
         elif action in {"download", "retry-downloads"}:
             self.discovery_summary.setText(
                 f"This download operation: {value[0]} succeeded; {value[1]} failed. "
                 "Previous successful images were not requested again. "
-                "Retry failed downloads uses existing results and preserves previous failures.")
+                "See Coverage & failures for eligible retries and failures that need a settings or format change."
+            )
 
 
 class ScreenPage(Page):
@@ -490,7 +530,7 @@ class ScreenPage(Page):
         self.box.addWidget(self.views, 1)
         setup = QWidget()
         setup_box = QVBoxLayout(setup)
-        self.views.addTab(setup, "Configuration & rule")
+        self.views.addTab(scroll_panel(setup), "Configuration & rule")
         group = QGroupBox("Explicit human-presence configuration")
         form = QFormLayout(group)
         self.model = QComboBox()
@@ -529,8 +569,12 @@ class ScreenPage(Page):
         self.counts = text_label()
         setup_box.addWidget(self.counts)
         self.rule_details = details()
+        technical = QCheckBox("Technical policy details")
+        setup_box.addWidget(technical)
         setup_box.addWidget(self.rule_details, 1)
-        self.browser = CandidateBrowser()
+        self.rule_details.hide()
+        technical.toggled.connect(self.rule_details.setVisible)
+        self.browser = CandidateBrowser(available_only=True)
         self.inspector = Inspector()
         self.browser.inspect.connect(lambda cid: window.inspect(self.inspector, cid))
         self.views.addTab(
@@ -559,7 +603,9 @@ class ScreenPage(Page):
             return
         for field, label in ((self.low, "low"), (self.high, "high")):
             if not field.text().strip():
-                self.window.notice(f"Enter an explicit {label} threshold for the selected detector. Nothing was saved.")
+                self.window.notice(
+                    f"Enter an explicit {label} threshold for the selected detector. Nothing was saved."
+                )
                 field.setFocus()
                 return
         try:
@@ -624,7 +670,6 @@ class ScreenPage(Page):
                 if detectors
                 else "Unconfigured — no detector or threshold default selected."
             )
-            + f"\nActive evidence policy: {(report['policy'] or {}).get('policy_id', 'none')}"
         )
         counts = report["observation_counts"]
         self.counts.setText(
@@ -915,7 +960,7 @@ class ReviewPage(Page):
     def __init__(self, window):
         super().__init__(
             window,
-            "Current investigator decisions and immutable review freezes are separate. Accept resolves review_required; an active exclusion requires an explicit screening override.",
+            "Viewing images does not record a review. View filters never change freeze membership.",
         )
         identity = QFormLayout()
         self.reviewer = QLineEdit()
@@ -926,25 +971,27 @@ class ReviewPage(Page):
         self.box.addWidget(self.modes, 1)
         review = QWidget()
         layout = QVBoxLayout(review)
-        self.browser = CandidateBrowser()
+        self.browser = CandidateBrowser(available_only=True)
         self.inspector = Inspector()
         self.browser.inspect.connect(lambda cid: window.inspect(self.inspector, cid))
         layout.addWidget(candidate_split(self.browser, self.inspector), 1)
         self.notes = QLineEdit()
         self.notes.setPlaceholderText("Investigator notes for this decision")
-        layout.addWidget(self.notes)
+        self.browser.layout().addWidget(self.notes)
         row = QHBoxLayout()
         for label, title, key in (
-            ("accepted", "Accept (Alt+A)", "Alt+A"),
-            ("maybe", "Maybe / defer (Alt+M)", "Alt+M"),
-            ("rejected", "Reject (Alt+R)", "Alt+R"),
+            ("accepted", "Accept", "Alt+A"),
+            ("maybe", "Maybe", "Alt+M"),
+            ("rejected", "Reject", "Alt+R"),
         ):
-            button(row, title, lambda checked=False, label=label: self.review(label))
+            action = button(row, title, lambda checked=False, label=label: self.review(label))
+            action.setToolTip(f"{title} ({key})")
             shortcut = QShortcut(QKeySequence(key), review)
             shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
             shortcut.activated.connect(lambda label=label: self.review(label))
-        layout.addLayout(row)
-        override = QHBoxLayout()
+        self.browser.layout().addLayout(row)
+        override_widget = QWidget()
+        override = QHBoxLayout(override_widget)
         self.disposition = QComboBox()
         self.disposition.addItem("Choose explicit screening override", None)
         for value in ("review_required", "eligible", "excluded"):
@@ -954,15 +1001,15 @@ class ReviewPage(Page):
         override.addWidget(self.disposition)
         override.addWidget(self.override_note, 1)
         button(override, "Record screening override…", self.override)
-        layout.addLayout(override)
         self.modes.addTab(review, "Current review")
         self.freeze = FreezePanel(window, self.reviewer)
-        self.modes.addTab(self.freeze, "Prepare freeze")
+        self.modes.addTab(scroll_panel(self.freeze), "Prepare freeze")
+        self.modes.addTab(scroll_panel(override_widget), "Screening override (advanced)")
 
     def review(self, label):
         current = self.inspector.current
         if not current:
-            self.window.notice("Select and inspect a candidate first.")
+            self.window.notice("Select and inspect an image first.")
             return
         self.submit(
             "review",
