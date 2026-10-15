@@ -1,7 +1,7 @@
-# Stimulus Harvester 0.2.0rc6
+# Stimulus Harvester 0.2.0rc7
 
 Research stimulus discovery & adjudication. Release candidate for evaluation;
-no production person detector has been selected.
+no production detector or screening thresholds have been selected.
 
 ## Install and first launch
 
@@ -14,15 +14,15 @@ received SHA256SUMS before deciding whether to trust it. A checksum alone does n
 authenticate its publisher. Do not bypass organizational security restrictions.
 
 Keep the application folder intact. Put research projects in a separate writable
-folder, such as Documents. Paths with spaces and `研究` are supported. Prefer a local
+folder, such as Documents. Paths with spaces and `ç ”ç©¶` are supported. Prefer a local
 working copy and sync/backup only when operations are idle; never have two programs
 writing to the same project at once.
 
 ## The six stages
 
 The collection selector applies to Discover, Screen and Review/freeze. Use
-**Collections… → Create** to name a research set and save several search phrases.
-Enter your investigator identity in the shared field. **Add selected images to…**
+**Collectionsâ€¦ â†’ Create** to name a research set and save several search phrases.
+Enter your investigator identity in the shared field. **Add selected images toâ€¦**
 adds existing results without copying image files. Each new membership starts
 Unreviewed: Accept in one collection does not accept the image in another.
 **All results** retains the separate project review. Removing and re-adding a
@@ -47,9 +47,15 @@ screening, history and compatibility details.
    search starts at page 1; search continuation is not yet available. Misconfiguration
    and remote errors are reported distinctly.
 3. **Screen:** optional. Core does not contain Torch, OpenCLIP, CUDA or weights.
-   Leave screening unconfigured and perform human review, or explicitly provision
-   ML, select a detector, thresholds and project rule. `not_detected` never proves
-   absence. Observation, rule evaluation and investigator adjudication remain separate.
+   Add an ordinary-language criterion, inspect its proposed observable targets and
+   confirm the interpretation. Unsupported intent can remain manual-only. Automatic
+   settings are separate and require explicitly provisioned ML, a model and numeric
+   boundaries; no defaults are supplied. Evaluate saved observations reuses compatible
+   evidence without inference. Criteria and overrides belong to the selected scope.
+   No match detected never proves absence. Accepted images with manual/partial or
+   incomplete criteria require an attributed screening override with a reason before
+   reviewed freezing; Accept/Reject remains a separate decision. Inspect saved object
+   outlines without changing originals. See `docs/generalized-screening.md`.
 4. **Review freeze:** inspect images and all source/license claims; record reviewer
    identity, Accept/Maybe/Reject and notes. Inspect validation blockers and resolve
    them before confirming a freeze. A freeze seals evidence and membership;

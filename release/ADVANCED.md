@@ -10,7 +10,7 @@ specific tested interpreter), install the supplied wheel:
 
 ```powershell
 py -3.12 -m venv harvester-ml
-.\harvester-ml\Scripts\python.exe -m pip install "path\stimulus_harvester-0.2.0rc6-py3-none-any.whl[gui]"
+.\harvester-ml\Scripts\python.exe -m pip install "path\stimulus_harvester-0.2.0rc7-py3-none-any.whl[gui]"
 .\harvester-ml\Scripts\python.exe -m pip install torch==2.8.0 torchvision==0.23.0 --index-url https://download.pytorch.org/whl/cpu
 .\harvester-ml\Scripts\python.exe -m pip check
 .\harvester-ml\Scripts\stimulus-harvester-gui.exe --project "your project"

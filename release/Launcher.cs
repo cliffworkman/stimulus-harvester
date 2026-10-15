@@ -9,9 +9,9 @@ using System.Windows.Forms;
 [assembly: AssemblyDescription("Research stimulus discovery & adjudication")]
 [assembly: AssemblyCompany("Stimulus Harvester contributors")]
 [assembly: AssemblyProduct("Stimulus Harvester")]
-[assembly: AssemblyVersion("0.2.0.6")]
-[assembly: AssemblyFileVersion("0.2.0.6")]
-[assembly: AssemblyInformationalVersion("0.2.0rc6")]
+[assembly: AssemblyVersion("0.2.0.7")]
+[assembly: AssemblyFileVersion("0.2.0.7")]
+[assembly: AssemblyInformationalVersion("0.2.0rc7")]
 class Launcher {
     // Windows CommandLineToArgvW quoting, including quotes and trailing backslashes.
     static string Quote(string value) {
