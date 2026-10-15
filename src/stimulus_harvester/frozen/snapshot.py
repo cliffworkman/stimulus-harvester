@@ -195,6 +195,8 @@ def snapshot(conn, project, request):
                     candidate_id=cid,
                 )
         if label == "accepted":
+            if c['screening'].get('manual_completion_required'):
+                block('manual_criterion_unresolved', 'Manual, partial, missing or failed automatic criteria need an attributed screening override for this exact policy after inspection; Accept is a separate suitability decision.', candidate_id=cid)
             if c["screening"]["effective_disposition"] == "excluded":
                 block(
                     "screening_excluded",
@@ -229,6 +231,8 @@ def snapshot(conn, project, request):
     if policy:
         policy_ids.add(policy["policy_id"])
     histories["policies"] = [p for p in screening["policies"] if p["policy_id"] in policy_ids]
+    generalized = any(p.get('evidence_version') == 2 for p in histories['policies']) or any(o.get('format_version') == 2 for o in histories['observations'])
+    artifact_version = 3 if generalized else 2 if scoped else 1
     groups = defaultdict(list)
     for c in records:
         if c["in_scope"] and c["asset_id"]:
@@ -381,9 +385,9 @@ def snapshot(conn, project, request):
     if request.parent_freeze_id:
         try:
             parent, _ = store.load(conn, project, request.parent_freeze_id, kind="freeze")
-            if parent["format_version"] != (2 if scoped else 1) or (
+            if parent["format_version"] != artifact_version or (
                 scoped and parent["scope"].get("collection_id") != request.scope.collection_id
-            ):
+            ) or (parent['scope']['mode'] == 'collection') != scoped:
                 raise ValueError("Parent freeze must have the same scientific scope and format")
         except (ValueError, OSError) as exc:
             block("parent_freeze_invalid", str(exc), parent_freeze_id=request.parent_freeze_id)
@@ -439,10 +443,15 @@ def snapshot(conn, project, request):
         data["semantics"]["human_review_scope"] = (
             "Independent collection/candidate/membership activation/asset decision; project reviews are contextual history only."
         )
+    if generalized:
+        data.update(format_version=3, review_scope='collection' if scoped else 'project', screening_contract_version=2)
+        data['semantics']['manual_criteria'] = 'Manual/partial/no-evidence criteria require an attributed effective eligible/excluded screening override bound to the current policy, independently of human suitability review.'
     return data
 
 
 def decision(candidate, version):
+    if version == 3:
+        return decision(candidate, 2 if 'collection_review' in candidate else 1)
     if version == 1:
         return candidate["review"]
     if version != 2:

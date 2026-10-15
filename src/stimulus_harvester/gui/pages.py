@@ -544,8 +544,11 @@ class ScreenPage(Page):
         self.box.addWidget(self.views, 1)
         setup = QWidget()
         setup_box = QVBoxLayout(setup)
-        self.views.addTab(scroll_panel(setup), "Configuration & rule")
-        group = QGroupBox("Explicit human-presence configuration")
+        from .criteria import CriteriaPanel
+        self.criteria = CriteriaPanel(self)
+        self.views.addTab(self.criteria, 'Screening criteria')
+        self.views.addTab(scroll_panel(setup), "Automatic settings (advanced)")
+        group = QGroupBox("Explicit automatic mechanism settings")
         form = QFormLayout(group)
         self.model = QComboBox()
         self.model.addItem("Choose a detector (no default)", None)
@@ -560,7 +563,7 @@ class ScreenPage(Page):
         self.device = QComboBox()
         self.device.addItems(["cpu", "cuda"])
         self.policy = QComboBox()
-        self.policy.addItem("Choose a project rule", None)
+        self.policy.addItem("Legacy person policy only: choose a rule", None)
         self.policy.addItem(
             "Strict zero-human: detected → excluded; all others → review_required",
             "strict_zero_human",
@@ -603,11 +606,14 @@ class ScreenPage(Page):
             "This explicitly starts local inference. Missing pretrained weights download on first use "
             "(about 167 MiB for ResNet50 v2 or 74 MiB for MobileNet320) to the user's Torch cache. "
             "No weights are included in the core installer. Exact weight identity and SHA-256 are "
-            "recorded with observations. Detector scores do not establish human absence.",
+            "recorded with observations. Detector scores do not establish object absence.",
         ):
             self.submit("screen")
 
     def evaluate_saved(self):
+        if (self.config or {}).get('screening', {}).get('criteria_version'):
+            self.criteria.evaluate()
+            return
         cid = self.window.collections.collection_id
         if not cid:
             self.window.notice(
@@ -643,7 +649,7 @@ class ScreenPage(Page):
         try:
             detector = DetectorConfig(
                 id="desktop-human",
-                property="human_presence",
+                property='coco_objects' if (self.config or {}).get('screening',{}).get('criteria_version') else 'human_presence',
                 model=model,
                 low_threshold=self.low.text(),
                 high_threshold=self.high.text(),
@@ -651,6 +657,11 @@ class ScreenPage(Page):
             )
         except ValidationError as exc:
             self.window.notice(f"Invalid screening settings; nothing was saved: {exc}")
+            return
+        if detector.property == 'coco_objects':
+            configuration = copy.deepcopy(self.config['screening'])
+            configuration['detectors'] = [detector.model_dump(mode='json')]
+            self.window.submit('criteria-policy', dict(configuration=configuration, actor=self.window.review.reviewer.text()))
             return
         policy = self.policy.currentData()
         if policy is None:
@@ -709,6 +720,9 @@ class ScreenPage(Page):
             },
         )
         self.config = config
+        self.criteria.populate((config or {}).get('screening', {}), report)
+        generalized = bool((config or {}).get('screening', {}).get('criteria_version'))
+        self.policy.setEnabled(not generalized)
         detectors = (config or {}).get("screening", {}).get("detectors", [])
         self.configured.setText(
             (
@@ -721,12 +735,14 @@ class ScreenPage(Page):
                 else "Unconfigured — no detector or threshold default selected."
             )
         )
+        if generalized:
+            self.configured.setText('Screening criteria · selected scope. Automatic settings configured; see advanced settings.' if detectors else 'Screening criteria · selected scope. Automatic screening not configured.')
         counts = report["observation_counts"]
         self.counts.setText(
             "Saved observations: "
             + " · ".join(
                 f"{s}: {counts.get(s, 0)}"
-                for s in ("detected", "uncertain", "not_detected", "error", "not_run")
+                for s in ("recorded", "detected", "uncertain", "not_detected", "error", "not_run")
             )
             + "\nEffective dispositions: "
             + " · ".join(
@@ -757,6 +773,8 @@ class ScreenPage(Page):
         self.run_button.setToolTip(
             "Requires an explicitly configured detector and optional torchvision/PyTorch runtime. Check capabilities in Project."
         )
+        if self.config:
+            self.criteria.populate(self.config.get('screening', {}), self.window.session.state.screening)
 
 
 class FreezePanel(QWidget):
@@ -1381,7 +1399,7 @@ class ArtifactPage(Page):
         self.summary.setText(
             f"Verified at inspection · {m['kind']} · {m['artifact_id']}\nCreated {m['created_at']} · {len(m['membership'])} assets · parent {m['parent_id'] or 'none'}\n{value['path']}\nLicense/source policy: {claims}"
         )
-        if m["format_version"] == 2:
+        if m["format_version"] == 2 or (m['format_version'] == 3 and m.get('review_scope') == 'collection'):
             name = m.get("collection_name") or m["collection_context"]["collection"]["name"]
             self.summary.setText(
                 "Collection: " + name + " · independent collection reviews\n" + self.summary.text()

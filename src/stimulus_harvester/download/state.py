@@ -106,9 +106,11 @@ def acquisition_summary(conn):
         r["available"] = False
         if r["download_status"] == "success" and r["asset_id"] and r["file_path"]:
             try:
-                path = resolve_path(root, r["file_path"])
-                r["available"] = path.is_file() and (
-                    r["file_size_bytes"] is None or path.stat().st_size == r["file_size_bytes"]
+                import stat
+                from stimulus_harvester.projection import file_view
+                path, info = file_view(root, r['file_path'])
+                r["available"] = stat.S_ISREG(info.st_mode) and (
+                    r["file_size_bytes"] is None or info.st_size == r["file_size_bytes"]
                 )
             except (OSError, ValueError):
                 pass

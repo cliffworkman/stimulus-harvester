@@ -102,9 +102,11 @@ def available_file(root, row):
     ):
         return False
     try:
-        path = resolve_path(root, row["file_path"])
-        return path.is_file() and (
-            row.get("file_size_bytes") is None or path.stat().st_size == row["file_size_bytes"]
+        import stat
+        from .projection import file_view
+        path, info = file_view(root, row['file_path'])
+        return stat.S_ISREG(info.st_mode) and (
+            row.get("file_size_bytes") is None or info.st_size == row["file_size_bytes"]
         )
     except (OSError, ValueError):
         return False
@@ -153,6 +155,8 @@ def screening_label(observations):
     if not states or states == {"not_run"}:
         return "Not run"
     labels = {
+        "recorded": "Object evidence recorded (see criteria)",
+        "manual_review_required": "Manual review required",
         "detected": "Detected",
         "not_detected": "Not detected (not confirmed absence)",
         "uncertain": "Uncertain",

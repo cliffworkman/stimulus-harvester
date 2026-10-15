@@ -56,6 +56,9 @@ def _invoke(project: Project, stage: str, options: dict):
         from stimulus_harvester.workspace import configure_person_screening
 
         return configure_person_screening(project, **options)
+    if stage == 'criteria-policy':
+        from stimulus_harvester.screening.generalized import save_policy
+        return save_policy(project, **options)
     if stage == "configure":
         from stimulus_harvester.workspace import save_configuration
 
@@ -168,6 +171,7 @@ def run_stage(
         "review",
         "review-batch",
         "screen-policy",
+        "criteria-policy",
         "collection",
     }:
         raise ValueError(f"Unknown stage: {stage}")

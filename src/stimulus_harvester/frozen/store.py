@@ -214,11 +214,22 @@ def verify_directory(root, *, expected_sha256=None):
     manifest = json.loads(data)
     if (
         manifest.get("format") != "stimulus-harvester-frozen"
-        or manifest["format_version"] not in {1, 2}
+        or manifest["format_version"] not in {1, 2, 3}
         or canonical(manifest) != data
     ):
         raise ValueError("Unsupported/noncanonical artifact manifest")
-    if manifest["format_version"] == 2:
+    if manifest['format_version'] == 3:
+        if manifest.get('review_scope') not in {'project', 'collection'}:
+            raise ValueError('Generalized artifact requires explicit review scope')
+        if manifest['kind'] == 'freeze':
+            if manifest.get('screening_contract_version') != 2:
+                raise ValueError('Unknown generalized screening contract')
+            scoped = manifest['review_scope'] == 'collection'
+            if scoped != (manifest['scope']['mode'] == 'collection') or scoped != ('collection_context' in manifest):
+                raise ValueError('Generalized review scope mismatch')
+            if not scoped and any('collection_review' in c for c in manifest['candidates']):
+                raise ValueError('Project freeze cannot substitute collection reviews')
+    if manifest["format_version"] == 2 or (manifest['format_version'] == 3 and manifest['review_scope'] == 'collection'):
         from .snapshot import decision
 
         if manifest["kind"] == "freeze":

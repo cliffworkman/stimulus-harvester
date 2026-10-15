@@ -45,7 +45,7 @@ class Window(QMainWindow):
         self.setCentralWidget(central)
         box = QVBoxLayout(central)
         self.context = text_label("No project open — start with Project.")
-        self.warning = text_label("No production person-detector default is selected.")
+        self.warning = text_label("No production detector or threshold default is selected.")
         self.context.setMaximumHeight(38)
         self.warning.setMaximumHeight(30)
         box.addWidget(self.context)
@@ -152,7 +152,7 @@ class Window(QMainWindow):
             cid = None
         if cid and action != "dependencies":
             payload["view_collection_id"] = cid
-            if action in {"search", "screen", "screen-policy"}:
+            if action in {"search", "screen", "screen-policy", "criteria-policy"}:
                 payload["collection_id"] = cid
                 if action != "screen":
                     payload["actor"] = self.review.reviewer.text()

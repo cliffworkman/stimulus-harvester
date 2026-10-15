@@ -39,7 +39,7 @@ def exercise(window, wait, project_path, screenshots=None):
     window.discover.views.setCurrentIndex(1)
     capture("02b-candidates", 1)
     window.tabs.setCurrentIndex(2)
-    window.screen.views.setCurrentIndex(1)
+    window.screen.views.setCurrentIndex(window.screen.views.count() - 1)
     window.screen.browser.select_candidate(candidates["overridden"])
     wait()
     window.screen.inspector.boxes.setChecked(True)

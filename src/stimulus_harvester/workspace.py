@@ -191,6 +191,12 @@ def recovery_diagnostics(project, artifacts):
 
 
 def workspace(path, collection_id=None):
+    from .projection import file_projection
+    with file_projection():
+        return _workspace(path, collection_id)
+
+
+def _workspace(path, collection_id=None):
     project = services.open_project(Path(path), validate_config=False)
     warnings = []
     try:
@@ -243,8 +249,8 @@ def workspace(path, collection_id=None):
             candidate["displayable"] = candidate["available"]
             if candidate["available"]:
                 try:
-                    path = project.resolve(candidate["file_path"])
-                    stat = path.stat()
+                    from .projection import file_view
+                    path, stat = file_view(project.root, candidate['file_path'])
                     candidate["displayable"] = _displayable(
                         str(path), stat.st_size, stat.st_mtime_ns
                     )
@@ -326,6 +332,11 @@ def workspace(path, collection_id=None):
                 c["available"] and not c["displayable"] for c in candidates
             )
             status["collection"] = selected_collection
+        if (screening.get('policy') or {}).get('evidence_version') == 2:
+            for c in candidates:
+                values = c['screening']['evaluations']
+                c['screening_text'] = '; '.join(dict.fromkeys(e['state_label'] for e in values)) or 'Not run'
+            summary['screened'] = sum(c['screening_text'] != 'Not run' for c in candidates)
     finally:
         conn.close()
     artifacts = services.list_frozen_artifacts(project)

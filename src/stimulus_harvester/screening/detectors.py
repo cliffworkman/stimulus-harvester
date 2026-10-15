@@ -104,6 +104,11 @@ class TorchvisionDetector:
         del state
         self.model.eval().to(config.device)
         self.transform, self.categories = weights.transforms(), weights.meta["categories"]
+        if config.property == 'coco_objects':
+            from .capabilities import registry
+            if self.categories != registry()['categories']:
+                raise ValueError('Model vocabulary differs from the supported capability registry')
+            self.identity.update(adapter_version='2', categories=list(self.categories), registry_version=registry()['registry_version'])
         self.runtime = {
             "device": config.device,
             "threads": torch.get_num_threads(),

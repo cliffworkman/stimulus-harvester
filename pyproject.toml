@@ -58,7 +58,7 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-stimulus_harvester = ["py.typed", "review/templates/*.html", "review/static/*.css", "review/static/*.js", "resources/*.yaml", "resources/*.ico", "resources/*.svg", "resources/*.md"]
+stimulus_harvester = ["py.typed", "review/templates/*.html", "review/static/*.css", "review/static/*.js", "resources/*.yaml", "resources/*.ico", "resources/*.svg", "resources/*.md", "resources/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -135,7 +135,7 @@ class ImageOverlay(QWidget):
                     painter.drawRect(target)
                     painter.setPen(QPen(QColor("yellow"), 2))
                     painter.drawRect(target)
-                    painter.drawText(target.topLeft(), f"person {detection.get('score', '?')}")
+                    painter.drawText(target.topLeft(), f"{detection.get('class', 'object')} {detection.get('score', '?')}")
 
 
 class Inspector(QWidget):
@@ -174,7 +174,7 @@ class Inspector(QWidget):
         self.observations = QComboBox()
         self.observations.setAccessibleName("Saved screening result to inspect")
         layout.addWidget(self.observations)
-        self.boxes = QCheckBox("Show saved detection boxes")
+        self.boxes = QCheckBox("Show detected-object outlines")
         layout.addWidget(self.boxes)
         layout.addStretch()
         self.tabs.addTab(scroll_panel(screening), "Screening")
@@ -356,6 +356,10 @@ class Inspector(QWidget):
             obs and self.current and obs["asset_id"] == self.current["evidence"]["asset_id"]
         )
         self.image.observation = obs if matching else None
+        has_boxes = matching and bool(obs.get('raw', {}).get('detections')) and obs.get('status') != 'error'
+        self.boxes.setVisible(bool(has_boxes))
+        if not has_boxes:
+            self.boxes.setChecked(False)
         if obs:
             text = (
                 screening_label([obs])

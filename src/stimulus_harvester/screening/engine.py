@@ -53,6 +53,11 @@ def run_screen(project, *, screening_config=None, reuse_raw=False, collection_id
         if screening_config is not None
         else project.config.screening
     )
+    if config.criteria_version:
+        from . import generalized
+        if reuse_raw:
+            return generalized.save_policy(project, configuration=config, collection_id=collection_id, actor='system:explicit-evaluation')
+        return generalized.run(project, config, collection_id)
     operation = ACTIVE_OPERATION.get()
     if not operation:
         raise ValueError("Screening must run through shared services")
@@ -292,6 +297,9 @@ def run_screen(project, *, screening_config=None, reuse_raw=False, collection_id
 def report_from_connection(conn, project, *, include_history=True, candidate_id=None):
     policies = records(conn, "screening_policies")
     policy = next((p for p in reversed(policies) if not p.get("collection_id")), None)
+    if policy and policy.get('evidence_version') == 2:
+        from .generalized import report
+        return report(conn, project, policy, policies, candidate_id=candidate_id)
     required = [r["id"] for r in policy["config"]["rules"]] if policy else []
     where = "WHERE candidate_id=?" if candidate_id is not None else ""
     params = (candidate_id,) if candidate_id is not None else ()
@@ -394,6 +402,8 @@ def override(project, *, candidate_id, disposition, reviewer, note=None, expecte
     try:
         ensure_schema(conn)
         report = report_from_connection(conn, project, include_history=False)
+        if (report.get('policy') or {}).get('evidence_version') == 2 and (expected_scope is None or not str(note or '').strip()):
+            raise ValueError('Criteria override requires a reason and the exact current evaluation scope')
         row = next(
             (r for r in report["candidates"] if candidate_id in (r["candidate_id"], r["local_id"])),
             None,

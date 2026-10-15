@@ -343,6 +343,9 @@ def screening_report(conn, project, collection_id):
     collection(conn, collection_id)
     policies = records(conn, "collection_policies", collection_id)
     policy = policies[-1] if policies else None
+    if policy and policy.get('evidence_version') == 2:
+        from stimulus_harvester.screening.generalized import report
+        return report(conn, project, policy, policies, collection_id)
     evaluations = records(conn, "collection_evaluations", collection_id)
     overrides = records(conn, "collection_overrides", collection_id)
     observations = screening_records(conn, "observations")
@@ -412,6 +415,9 @@ def evaluate_policy(conn, project, collection_id, configuration):
 
     config = ScreeningConfig.model_validate(configuration)
     collection(conn, collection_id, active=True)
+    if config.criteria_version:
+        from stimulus_harvester.screening.generalized import activate
+        return activate(conn, project, config, collection_id, 'system:explicit-evaluation')
     policy_id = new_id("policy")
     append(
         conn,

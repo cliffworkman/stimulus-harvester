@@ -72,7 +72,9 @@ def assemble(project, *, freeze_id, parent_assembly_id=None):
             },
         }
         manifest["format_version"] = freeze["format_version"]
-        if freeze["format_version"] == 2:
+        if freeze["format_version"] == 3:
+            manifest["review_scope"] = freeze["review_scope"]
+        if "collection_context" in freeze:
             manifest["collection_id"] = freeze["scope"]["collection_id"]
             manifest["collection_name"] = freeze["collection_context"]["collection"]["name"]
         with store.staging(project, "assembly") as stage:
@@ -119,7 +121,7 @@ def export_frozen(
         if assembly["freeze_manifest_sha256"] != store.sha(store.canonical(freeze)):
             raise ValueError("Assembly/freeze binding failed")
         if assembly["format_version"] != freeze["format_version"] or (
-            freeze["format_version"] == 2
+            "collection_context" in freeze
             and assembly.get("collection_id") != freeze["scope"]["collection_id"]
         ):
             raise ValueError("Assembly scientific scope mismatch")
@@ -155,7 +157,9 @@ def export_frozen(
             },
         }
         manifest["format_version"] = freeze["format_version"]
-        if freeze["format_version"] == 2:
+        if freeze["format_version"] == 3:
+            manifest["review_scope"] = freeze["review_scope"]
+        if "collection_context" in freeze:
             manifest["collection_id"] = freeze["scope"]["collection_id"]
             manifest["collection_name"] = freeze["collection_context"]["collection"]["name"]
         with store.staging(project, "frozen_export") as stage:
@@ -216,7 +220,7 @@ def export_frozen(
                 },
             }
             (stage / "summary.json").write_bytes(store.canonical(summary))
-            if freeze["format_version"] == 2:
+            if "collection_context" in freeze:
                 summary.update(
                     collection_id=manifest["collection_id"],
                     collection_name=manifest["collection_name"],
@@ -244,7 +248,7 @@ def export_frozen(
                 )
             page = '<!doctype html><html lang="en"><meta charset="utf-8"><title>Frozen stimuli</title><style>body{font:16px system-ui;max-width:1100px;margin:30px auto}article{border-top:1px solid #aaa;padding:20px}img{max-width:100%;max-height:500px}pre{white-space:pre-wrap;overflow-wrap:anywhere}</style>'
             page += f"<h1>Frozen stimuli</h1><p>{len(rows)} stimuli. Source claims are not verified reuse permission.</p>"
-            if freeze["format_version"] == 2:
+            if "collection_context" in freeze:
                 page += f"<p>Collection: {html.escape(manifest['collection_name'])}. Independent collection review decisions.</p>"
             page += '<p><a href="freeze/manifest.json">Freeze evidence</a> · <a href="assembly-manifest.json">Assembly evidence</a> · <a href="manifest.json">Export manifest</a></p>'
             page += "".join(cards) + "</html>"
