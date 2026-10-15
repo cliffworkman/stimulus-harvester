@@ -1,5 +1,49 @@
 # stimulus-harvester
 
+## Try the current desktop application
+
+The current source is **0.2.0rc7**, a development release candidate in the
+Stimulus Modernization Suite. It includes image discovery and download recovery,
+visual curation, independent research collections, generalized screening criteria,
+and immutable review/freeze/assembly/export workflows. The interface is still being
+refined; feedback and reproducible problems are welcome in
+[GitHub Issues](https://github.com/cliffworkman/stimulus-harvester/issues).
+
+To try it from source on Windows, install Git and Python 3.12 or 3.13, then run in
+PowerShell:
+
+```powershell
+git clone https://github.com/cliffworkman/stimulus-harvester.git
+cd stimulus-harvester
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install ".[gui]"
+.\.venv\Scripts\python.exe -m stimulus_harvester.gui.app
+```
+
+On Linux/macOS, use `python3 -m venv .venv`, then `.venv/bin/python -m pip install
+".[gui]"` and `.venv/bin/python -m stimulus_harvester.gui.app`. Current packaged
+desktop verification is on Windows; equivalent platform acceptance is not claimed.
+
+Create a project in a separate writable folder. Start with Openverse, or configure
+Commons with your operator contact. Search, acquire images, inspect them and record
+your reviews. The desktop installation above needs no ML libraries, GPU or model
+weights. You can record manual screening criteria; automatic screening requires
+separate explicit configuration. No production detector or threshold default is
+provided. For the supported object-screening environment, use
+[the optional ML instructions](release/ADVANCED.md); the older CLIP deployment
+notes below describe a separate configuration.
+
+Read the [user guide](src/stimulus_harvester/resources/USER-GUIDE.md),
+[collections guide](docs/collections.md),
+[generalized screening guide](docs/generalized-screening.md), and
+[rc7 verification and limitations](release/RC7-VERIFICATION.md).
+Windows installer/portable builds have been tested locally but are not published
+as GitHub Releases yet. Code signing is intentionally deferred suite-level work;
+those builds are unsigned and Windows may show Unknown Publisher or SmartScreen
+warnings. This source upload is not a final production release.
+
+## Background
+
 A local-first, free/open-source pipeline for harvesting, filtering, scoring, and
 reviewing candidate stimulus images for research use — built first for a narrow
 practical problem: finding more prison-cell architectural photographs, especially
